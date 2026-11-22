@@ -27,18 +27,19 @@ import (
 )
 
 type terminalChoice struct {
-	label   string
-	args    []string
-	page    string
-	prompt  string
-	confirm bool
-	mark    string
-	season  int
-	episode string
-	key     seriesKey
-	movie   xtream.Movie
-	setting string
-	secret  bool
+	label    string
+	args     []string
+	page     string
+	prompt   string
+	confirm  bool
+	mark     string
+	season   int
+	episode  string
+	provider string
+	key      seriesKey
+	movie    xtream.Movie
+	setting  string
+	secret   bool
 }
 
 var terminalMenus = map[string][]terminalChoice{
@@ -373,7 +374,7 @@ func runTerminal(ctx context.Context) error {
 			menu = terminalSettings(settings, values)
 		}
 		if page != "Main" && page != sessionSettings {
-			menu = append(slices.Clone(menu), terminalChoice{label: "Back to Previous", page: terminalPrevious(page)}, terminalChoice{label: "Back to Main", page: "Main"}, terminalChoice{label: "Exit"})
+			menu = append(slices.Clone(menu), terminalChoice{label: "Back to Previous", page: browser.previous(page)}, terminalChoice{label: "Back to Main", page: "Main"}, terminalChoice{label: "Exit"})
 		}
 		available := make([]terminalChoice, 0, len(menu))
 		for _, item := range menu {
@@ -494,7 +495,7 @@ func runTerminal(ctx context.Context) error {
 			if completion.preview && !completion.failed {
 				mode = "confirm"
 			} else if !completion.failed {
-				if destination := browser.browse(discovered); destination != "" {
+				if destination := browser.browse(discovered, page); destination != "" {
 					navigate(destination)
 				}
 			}
@@ -520,7 +521,7 @@ func runTerminal(ctx context.Context) error {
 					if filter != "" {
 						filter, selection = "", 0
 					} else if page != "Main" && page != sessionSettings {
-						navigate(terminalPrevious(page))
+						navigate(browser.previous(page))
 					}
 				case key == "up":
 					selection = max(0, selection-1)
@@ -546,6 +547,9 @@ func runTerminal(ctx context.Context) error {
 							launch(true)
 						}
 					case choice.page != "":
+						if choice.provider != "" {
+							browser.provider = choice.provider
+						}
 						navigate(choice.page)
 					case choice.setting != "":
 						mode, input = "input", ""
@@ -623,7 +627,7 @@ func runTerminal(ctx context.Context) error {
 			case "result":
 				switch key {
 				case "text:b", "text:B":
-					if destination := browser.browse(discovered); destination != "" {
+					if destination := browser.browse(discovered, page); destination != "" {
 						navigate(destination)
 					}
 				case "enter":

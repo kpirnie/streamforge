@@ -17,6 +17,8 @@ import (
 )
 
 const (
+	seriesProviders  = "Series providers"
+	movieProviders   = "Movie providers"
 	matchingSeries   = "Series search results"
 	matchingMovies   = "Movie search results"
 	matchingEpisodes = "Series episodes"
@@ -28,6 +30,8 @@ type seriesKey struct{ provider, id string }
 type terminalSeries struct {
 	groups      []xtream.SearchGroup
 	movieGroups []xtream.MovieGroup
+	provider    string
+	episodeFrom string
 	listing     seriesDiscovery
 	selected    map[seriesKey]map[string]string
 	movies      map[seriesKey]xtream.Movie
@@ -36,24 +40,46 @@ type terminalSeries struct {
 
 func (s *terminalSeries) choices(page string) []terminalChoice {
 	switch page {
+	case seriesProviders:
+		var choices []terminalChoice
+		for _, group := range s.groups {
+			if len(group.Series) > 0 {
+				choices = append(choices, providerChoice(group.Provider, len(group.Series), matchingSeries))
+			}
+		}
+		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
+	case movieProviders:
+		var choices []terminalChoice
+		for _, group := range s.movieGroups {
+			if len(group.Movies) > 0 {
+				choices = append(choices, providerChoice(group.Provider, len(group.Movies), matchingMovies))
+			}
+		}
+		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
 	case matchingMovies:
 		var choices []terminalChoice
 		for _, group := range s.movieGroups {
+			if group.Provider != s.provider {
+				continue
+			}
 			for _, movie := range group.Movies {
 				key := seriesKey{group.Provider, movie.ID}
 				marker := "[ ] "
 				if _, queued := s.movies[key]; queued {
 					marker = "[x] "
 				}
-				choices = append(choices, terminalChoice{label: marker + movieLabel(movie) + " [" + group.Provider + "]", mark: "movie", key: key, movie: movie})
+				choices = append(choices, terminalChoice{label: marker + movieLabel(movie), mark: "movie", key: key, movie: movie})
 			}
 		}
 		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
 	case matchingSeries:
 		var choices []terminalChoice
 		for _, group := range s.groups {
+			if group.Provider != s.provider {
+				continue
+			}
 			for _, item := range group.Series {
-				label := item.Title + " [" + group.Provider + "]"
+				label := item.Title
 				if item.Year != "" {
 					label += " (" + item.Year + ")"
 				}
@@ -128,6 +154,14 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 	default:
 		return terminalMenus[page]
 	}
+}
+
+func providerChoice(provider string, count int, page string) terminalChoice {
+	label := fmt.Sprintf("%s (%d matches)", provider, count)
+	if count == 1 {
+		label = provider + " (1 match)"
+	}
+	return terminalChoice{label: label, page: page, provider: provider}
 }
 
 func (s *terminalSeries) mark(choice terminalChoice) []string {
@@ -236,21 +270,22 @@ func (s *terminalSeries) arguments(process bool) []string {
 	return args
 }
 
-func (s *terminalSeries) browse(discovery seriesDiscovery) string {
+func (s *terminalSeries) browse(discovery seriesDiscovery, from string) string {
 	if len(discovery.episodes) != 0 {
 		s.listing = discovery
+		s.episodeFrom = from
 		return matchingEpisodes
 	}
 	for _, group := range discovery.groups {
 		if len(group.Series) > 0 {
 			s.groups = discovery.groups
-			return matchingSeries
+			return seriesProviders
 		}
 	}
 	for _, group := range discovery.movies {
 		if len(group.Movies) > 0 {
 			s.movieGroups = discovery.movies
-			return matchingMovies
+			return movieProviders
 		}
 	}
 	return ""
@@ -260,14 +295,21 @@ func (s *terminalSeries) heading(page string) string {
 	if page == matchingEpisodes {
 		return s.listing.title + " [" + s.listing.provider + "]"
 	}
+	if page == matchingSeries || page == matchingMovies {
+		return page + " [" + s.provider + "]"
+	}
 	return page
 }
 
-func terminalPrevious(page string) string {
+func (s *terminalSeries) previous(page string) string {
 	switch page {
 	case matchingEpisodes:
-		return matchingSeries
-	case matchingSeries, matchingMovies, downloadQueue:
+		return s.episodeFrom
+	case matchingSeries:
+		return seriesProviders
+	case matchingMovies:
+		return movieProviders
+	case seriesProviders, movieProviders, downloadQueue:
 		return "Downloads"
 	default:
 		return "Main"
