@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kpirnie/streamforge/internal/app/menu"
 	"github.com/kpirnie/streamforge/internal/media"
 	"github.com/kpirnie/streamforge/internal/xtream"
 )
@@ -132,6 +133,8 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	var companionFailures []error
 	var done, skipped, cancelled int
 	completed := make(map[string]string)
+	queued := make(map[string]menu.QueueItem)
+	tracked := progress != nil && progress.complete != nil
 	progress.setTotal(len(paths))
 	transferEpisode := func(provider string, episode xtream.Episode, transfer func(context.Context, *os.File, func() error) error) {
 		path := downloadPath(provider, episode)
@@ -149,14 +152,29 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 			})
 		})
 		var companionErr error
+		var companion string
 		existing := errors.Is(result, os.ErrExist) && !command.redownload
 		if !command.process && (result == nil || existing) && work.Err() == nil {
-			_, companionErr = media.WriteSTRMIn(work, root, path, "", parent, directory, titles, false)
+			companion, companionErr = media.WriteSTRMIn(work, root, path, "", parent, directory, titles, false)
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		if companionErr != nil {
-			companionFailures = append(companionFailures, fmt.Errorf("episode %s companion: %w", episode.ID, companionErr))
+			companionFailures = append(companionFailures, fmt.Errorf("%s companion: %w", label, companionErr))
+		}
+		if companion != "" {
+			reportDownloadPaths(report, path, companion, parent)
+			if tracked {
+				if err := progress.complete(provider, episode.SeriesID, episode.ID); err != nil {
+					failures = append(failures, fmt.Errorf("update download queue: %w", err))
+				}
+			}
+		}
+		if command.process && (result == nil || (existing && tracked && work.Err() == nil)) {
+			completed[path] = directory
+			if tracked {
+				queued[path] = menu.QueueItem{Provider: provider, SeriesID: episode.SeriesID, ID: episode.ID}
+			}
 		}
 		switch {
 		case result != nil && work.Err() != nil:
@@ -166,14 +184,11 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 			skipped++
 			finish("skipped")
 		case result != nil:
-			failures = append(failures, fmt.Errorf("episode %s: %w", episode.ID, result))
+			failures = append(failures, fmt.Errorf("%s: %w", label, result))
 			finish("failed")
 		default:
 			done++
 			finish("done")
-			if command.process {
-				completed[path] = directory
-			}
 		}
 	}
 	var workers sync.WaitGroup
@@ -193,9 +208,24 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	report("Downloaded %d items, %d skipped, %d failed, %d cancelled, %d companion failures", done, skipped, len(failures), cancelled, len(companionFailures))
 	var processErr error
 	if command.process && len(completed) > 0 && ctx.Err() == nil {
-		processErr = runTranscode(ctx, nil, completed, titles, value, false, yes, report, progress)
+		var finishItem func(string) error
+		if tracked {
+			finishItem = func(input string) error {
+				item := queued[input]
+				return progress.complete(item.Provider, item.SeriesID, item.ID)
+			}
+		}
+		processErr = runTranscode(ctx, nil, completed, titles, value, false, yes, report, progress, finishItem)
 	}
 	return errors.Join(ctx.Err(), errors.Join(failures...), errors.Join(companionFailures...), processErr)
+}
+
+func reportDownloadPaths(report func(string, ...any), video, companion, parent string) {
+	report("Video: %s", filepath.Join(media.Working, video))
+	if companion != "" {
+		report("Playback link: %s", filepath.Join(media.Working, companion))
+		report("Player path: %s", filepath.Join(parent, video))
+	}
 }
 
 func downloadPath(provider string, episode xtream.Episode) string {

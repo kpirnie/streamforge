@@ -155,6 +155,11 @@ func runTerminal(ctx context.Context) error {
 		return err
 	}
 	defer session.Close()
+	queue, err := openDownloadQueue()
+	if err != nil {
+		return fmt.Errorf("open download queue: %w", err)
+	}
+	defer queue.close()
 
 	settings, _ := readEnvironment()
 	values := make(map[string]string)
@@ -201,6 +206,7 @@ func runTerminal(ctx context.Context) error {
 	var arguments []string
 	var result string
 	browser := menu.NewBrowser(downloadPath)
+	browser.RestoreQueue(queue.snapshot())
 	if len(menu.Settings(settings, values)) > 1 {
 		page = menu.SessionSettings
 	}
@@ -231,6 +237,9 @@ func runTerminal(ctx context.Context) error {
 		cancelOperation = cancel
 		mode, started = "running", time.Now()
 		progress = &operationProgress{active: make(map[string]context.CancelFunc)}
+		if !preview && page == menu.DownloadQueue {
+			progress.complete = queue.complete
+		}
 		activeSelection = 0
 		currentProgress := progress
 		currentValues := maps.Clone(values)
@@ -238,6 +247,7 @@ func runTerminal(ctx context.Context) error {
 		if preview {
 			args = append(args, "--dry-run")
 		}
+		download := !preview && len(args) > 1 && args[1] == "download"
 		retry := choice.Label == "Retry Connections"
 		copyReport := choice.Label == "Copy Diagnostics"
 		clipboard := copyReport && supportsClipboard()
@@ -269,7 +279,15 @@ func runTerminal(ctx context.Context) error {
 			default:
 				fmt.Fprintln(buffer, "Completed.")
 			}
-			finished <- operationResult{copied, discovery, buffer.String(), refreshed, preview, err != nil || operation.Err() != nil}
+			result := buffer.String()
+			if download {
+				heading := "Completion Summary"
+				if currentProgress.complete != nil {
+					heading += fmt.Sprintf(" · %d still queued", len(queue.snapshot()))
+				}
+				result = heading + "\n\n" + result
+			}
+			finished <- operationResult{copied, discovery, result, refreshed, preview, err != nil || operation.Err() != nil}
 		}()
 	}
 	for {
@@ -381,6 +399,7 @@ func runTerminal(ctx context.Context) error {
 			return nil
 		case <-redraw.C:
 		case completion := <-finished:
+			browser.RestoreQueue(queue.snapshot())
 			result = completion.text
 			if completion.clipboard != "" {
 				fmt.Fprintf(os.Stdout, "\x1b]52;c;%s\a", completion.clipboard)
@@ -442,6 +461,9 @@ func runTerminal(ctx context.Context) error {
 						arguments = browser.Mark(choice)
 						if len(arguments) != 0 {
 							launch(true)
+						} else if err := queue.replace(browser.Queue()); err != nil {
+							browser.RestoreQueue(queue.snapshot())
+							mode, result, scroll = "result", fmt.Sprintf("Save download queue: %v", err), 0
 						}
 					case choice.Page != "":
 						browser.Open(choice)

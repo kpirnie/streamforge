@@ -244,7 +244,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 		titles = providerCache.titles
 	}
 	if (service == "movies" || service == "series") && action == "transcode" {
-		return runTranscode(ctx, command[2:], nil, titles, value, dryRun, yes || !confirm, report, progress)
+		return runTranscode(ctx, command[2:], nil, titles, value, dryRun, yes || !confirm, report, progress, nil)
 	}
 	if service == "strm" {
 		return runSTRM(ctx, command[1:], parent, value("STREAMFORGE_EXCLUDE", ""), titles, dryRun, report)

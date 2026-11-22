@@ -12,6 +12,7 @@ import (
 )
 
 type operationProgress struct {
+	complete  func(provider, seriesID, id string) error
 	mu        sync.Mutex
 	total     int
 	done      int

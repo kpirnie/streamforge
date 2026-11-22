@@ -94,6 +94,7 @@ Run the binary with no arguments in a TTY to open the menu. No arguments without
 | `/config/providers.json` | Read-only Xtream provider definitions. |
 | `/working/input` | Source media and completed provider downloads. |
 | `/working/output` | Processed media and `.strm` companions. |
+| `/working/download-queue.yaml` | Pending terminal download selections, restored on startup. |
 | `/working` | `channels.csv`, session logs, and saved diagnostics. |
 
 Mount `/config` read-only and `/working` read/write. Keep credentials in the host configuration directory or pass them through the process environment. Relative media paths such as `shows/Example` resolve under `/working/input`. You can also specify `input/shows/Example` or `/working/input/shows/Example`. The `strm` command accepts either tree. Transcode commands read from `input`.
@@ -258,6 +259,8 @@ The report includes build information, runtime, service status, mounted paths, m
 Choose **Continue with Defaults** or enter the settings available for the session. Use arrow keys to move, type to filter the current list, and press Enter to select. Protected actions present a preview. Press Y to proceed or Enter to decline. Results stay visible until you return. Esc goes back or cancels the active operation. Ctrl+C exits.
 
 Open **Downloads** and choose **Search movies** or **Search series**. The results show providers with match counts. Choose a provider to see its matching titles. Select a movie to toggle it in the queue. For a series match, choose **Add All Episodes to Download Queue** or toggle individual episodes and seasons. The shared **Download queue** lets you review or remove selections before choosing **Download Only** or **Download and Process**. If some providers fail, the provider menu still opens for available matches. During a transfer, use the arrows and X to cancel one active download, or Esc to cancel the batch.
+
+StreamForge saves queue changes in `/working/download-queue.yaml`. Items leave the queue when their video and playback link are ready, including processing if selected. Failed or cancelled items stay queued so you can retry them. The completion summary shows the batch outcome and the video, playback link, and player paths for completed items.
 
 **System Status** shows connectivity and tool availability and offers **Retry Connections**, **Copy Diagnostics**, and **Save diagnostics**. Clipboard copy uses the terminal when supported and saves a report otherwise.
 

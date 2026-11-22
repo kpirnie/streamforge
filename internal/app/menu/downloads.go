@@ -37,7 +37,7 @@ type Browser struct {
 	episodeFrom  string
 	listing      Discovery
 	selected     map[seriesKey]map[string]string
-	movies       map[seriesKey]xtream.Movie
+	movies       map[seriesKey]string
 	redownload   bool
 }
 
@@ -154,7 +154,7 @@ func (s *Browser) choices(page string) []Choice {
 		}
 		var queued []Choice
 		for key, movie := range s.movies {
-			label := fmt.Sprintf("Remove %s [%s · %s]", MovieLabel(movie), key.provider, key.id)
+			label := fmt.Sprintf("Remove %s [%s · %s]", movie, key.provider, key.id)
 			queued = append(queued, Choice{Label: label, Mark: "remove-movie", key: key})
 		}
 		for key, ids := range s.selected {
@@ -196,7 +196,7 @@ func (s *Browser) Mark(choice Choice) []string {
 		if _, queued := s.movies[choice.key]; queued {
 			delete(s.movies, choice.key)
 		} else {
-			s.movies[choice.key] = choice.movie
+			s.movies[choice.key] = MovieLabel(choice.movie)
 		}
 		return nil
 	case "remove-movie":
@@ -341,7 +341,7 @@ func NewBrowser(downloadPath func(string, xtream.Episode) string) *Browser {
 	return &Browser{
 		downloadPath: downloadPath,
 		selected:     make(map[seriesKey]map[string]string),
-		movies:       make(map[seriesKey]xtream.Movie),
+		movies:       make(map[seriesKey]string),
 	}
 }
 

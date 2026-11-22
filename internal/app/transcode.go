@@ -20,7 +20,7 @@ import (
 	"github.com/kpirnie/streamforge/internal/media"
 )
 
-func runTranscode(ctx context.Context, args []string, seriesDirectories map[string]string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress) error {
+func runTranscode(ctx context.Context, args []string, seriesDirectories map[string]string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress, finishItem func(string) error) error {
 	profile := media.Conversion{
 		FFmpeg:     value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg"),
 		FFprobe:    value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe"),
@@ -214,18 +214,19 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 			_, finish := progress.begin(ctx, "")
 			encoder, skip, attempts, err := profile.Convert(ctx, root, item.input, item.output, item.muxer, encoders)
 			var companionErr, deleteErr error
+			var companion string
+			target := item.output
 			if err == nil && skip && fromDownload && parent != "" {
-				target := item.input
-				if info, statErr := root.Lstat(item.output); statErr == nil && info.Mode().IsRegular() {
-					target = item.output
+				if info, statErr := root.Lstat(item.output); statErr != nil || !info.Mode().IsRegular() {
+					target = item.input
 				}
-				_, companionErr = media.WriteSTRMIn(ctx, root, target, item.input, parent, seriesDirectories[item.input], titles, false)
+				companion, companionErr = media.WriteSTRMIn(ctx, root, target, item.input, parent, seriesDirectories[item.input], titles, false)
 			}
 			if err == nil && !skip {
 				if parent != "" {
-					_, companionErr = media.WriteSTRMIn(ctx, root, item.output, item.input, parent, seriesDirectories[item.input], titles, false)
+					companion, companionErr = media.WriteSTRMIn(ctx, root, item.output, item.input, parent, seriesDirectories[item.input], titles, false)
 				}
-				if remove && ctx.Err() == nil {
+				if remove && companionErr == nil && ctx.Err() == nil {
 					current, err := root.Lstat(item.input)
 					if err != nil {
 						deleteErr = err
@@ -238,17 +239,25 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 			}
 			mu.Lock()
 			defer mu.Unlock()
+			if fromDownload && err == nil && companionErr == nil {
+				reportDownloadPaths(report, target, companion, parent)
+				if finishItem != nil && ctx.Err() == nil && deleteErr == nil {
+					if err := finishItem(item.input); err != nil {
+						postFailures = append(postFailures, fmt.Errorf("update download queue: %w", err))
+					}
+				}
+			}
 			retries += attempts
 			switch {
 			case err != nil && ctx.Err() != nil:
 				cancelled++
 				finish("cancelled")
 			case err != nil:
-				failures = append(failures, fmt.Errorf("media item %d: %w", index+1, err))
+				failures = append(failures, fmt.Errorf("%s: %w", item.input, err))
 				finish("failed")
 			case skip:
 				if companionErr != nil {
-					postFailures = append(postFailures, fmt.Errorf("media item %d companion: %w", index+1, companionErr))
+					postFailures = append(postFailures, fmt.Errorf("%s companion: %w", item.input, companionErr))
 				}
 				skipped++
 				finish("skipped")
@@ -257,10 +266,10 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 				finish("done")
 				report("Transcoded media item %d with %s", index+1, encoder)
 				if companionErr != nil {
-					postFailures = append(postFailures, fmt.Errorf("media item %d companion: %w", index+1, companionErr))
+					postFailures = append(postFailures, fmt.Errorf("%s companion: %w", item.input, companionErr))
 				}
 				if deleteErr != nil {
-					postFailures = append(postFailures, fmt.Errorf("media item %d source removal: %w", index+1, deleteErr))
+					postFailures = append(postFailures, fmt.Errorf("%s source removal: %w", item.input, deleteErr))
 				}
 			}
 		})
