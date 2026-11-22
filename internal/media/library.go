@@ -83,7 +83,7 @@ func excluded(name string, patterns []string) bool {
 }
 
 // WriteSTRM writes a companion for an existing media file using the player's mount root.
-func WriteSTRM(ctx context.Context, root *os.Root, mediaPath, parent string, titles *Titles, dryRun bool) (string, error) {
+func WriteSTRM(ctx context.Context, root *os.Root, mediaPath, source, parent string, titles *Titles, dryRun bool) (string, error) {
 	if !filepath.IsAbs(parent) || strings.ContainsAny(parent, "\r\n") {
 		return "", errors.New("playback parent must be an absolute path")
 	}
@@ -103,13 +103,48 @@ func WriteSTRM(ctx context.Context, root *os.Root, mediaPath, parent string, tit
 		return destination, nil
 	}
 	data := filepath.Join(parent, mediaPath) + "\n"
-	if err := AtomicWrite(ctx, root, destination, 0666, true, func(file *os.File) error {
-		_, err := io.WriteString(file, data)
-		return err
-	}); err != nil {
-		return "", err
+	if source == "" {
+		source = mediaPath
 	}
-	return destination, nil
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		target := destination
+		exists, owned, err := ownership(root, target, source)
+		if err != nil {
+			return "", err
+		}
+		if exists && !owned {
+			owned = previousCompanion(root, target, mediaPath) || previousCompanion(root, target, source)
+			if !owned {
+				target, err = SelectTarget(root, destination, source, nil)
+				if err != nil {
+					return "", err
+				}
+				exists, owned, err = ownership(root, target, source)
+				if err != nil {
+					return "", err
+				}
+				if exists && !owned {
+					continue
+				}
+			}
+		}
+		err = AtomicWrite(ctx, root, target, 0666, exists && owned, func(file *os.File) error {
+			if _, err := io.WriteString(file, data); err != nil {
+				return err
+			}
+			return markSource(file, source)
+		})
+		if errors.Is(err, os.ErrExist) && !exists {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return target, nil
+	}
 }
 
 // AtomicWrite publishes a completed regular file without replacing it on failure.

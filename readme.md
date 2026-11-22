@@ -77,6 +77,8 @@ streamforge diagnostics --save
 
 Media commands use host-mounted FFmpeg and FFprobe. The default paths are `/usr/local/bin/ffmpeg` and `/usr/local/bin/ffprobe`. Use statically linked Linux binaries for the image architecture, or provide the runtime libraries and loader needed by the mounted executables. For GPU encoding, pass the device nodes, matching host libraries, and supplementary groups that grant read/write device access. Device paths and drivers depend on the host. NVIDIA container integration can supply its driver libraries and devices. Intel and AMD generally require the applicable `/dev/dri/renderD*` node and user-space driver. A usable CPU encoder allows fallback.
 
+The default CPU budget is half the available logical CPUs. If GPU encoding is available, the default is one concurrent GPU job; an explicit job count is capped at two as a conservative limit. Set `--resolution=WIDTHxHEIGHT`, `--frame-rate=FPS`, or `--aspect=W:H` to override source geometry or timing. Stream copy carries the original HDR stream. HEVC 10-bit encoding supports static HDR metadata, and `--convert-hdr` uses the CPU tone-mapping filters. Dynamic HDR re-encoding depends on encoder support; use stream copy to retain the original stream.
+
 ## Interactive and scheduled use
 
 Use `docker compose run --rm streamforge` to open the terminal interface. Choose Continue with Defaults or enter session settings. Arrow keys move, typing filters the current list, Enter selects, and Esc returns or cancels an active operation. Ctrl+C exits. Completed operations retain their results until Enter returns to the menu. For SSH, allocate a terminal with `ssh -t` when opening the TUI.

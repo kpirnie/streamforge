@@ -22,6 +22,9 @@ var availableSettings = []terminalSetting{
 	{"STREAMFORGE_CONTAINER", "Container", "keep, mkv, or mp4", false},
 	{"STREAMFORGE_QUALITY", "Quality", "balanced, high, or compression", false},
 	{"STREAMFORGE_HARDWARE", "Encoder", "auto, cpu, nvidia, intel, or amd", false},
+	{"STREAMFORGE_FORCE", "Reprocess existing", "true or false", false},
+	{"STREAMFORGE_CONVERT_HDR", "Convert HDR to SDR", "true or false", false},
+	{"STREAMFORGE_DELETE_ORIGINAL", "Delete successful source originals", "true or false", false},
 	{"DISP_URL", "Dispatcharr URL", "Dispatcharr server URL", false},
 	{"DISP_USER", "Dispatcharr username", "Dispatcharr username", false},
 	{"DISP_PASS", "Dispatcharr password", "Dispatcharr password", true},
@@ -70,6 +73,8 @@ func checkTerminalSetting(key, value string) bool {
 		return value == "keep" || value == "mkv" || value == "mp4"
 	case "STREAMFORGE_QUALITY":
 		return value == "balanced" || value == "high" || value == "compression"
+	case "STREAMFORGE_FORCE", "STREAMFORGE_CONVERT_HDR", "STREAMFORGE_DELETE_ORIGINAL":
+		return value == "true" || value == "false"
 	case "STREAMFORGE_HARDWARE":
 		return value == "auto" || value == "cpu" || value == "nvidia" || value == "intel" || value == "amd"
 	default:

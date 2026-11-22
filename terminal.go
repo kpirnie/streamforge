@@ -43,7 +43,7 @@ var terminalMenus = map[string][]terminalChoice{
 		{label: "Dispatcharr", page: "Dispatcharr"},
 		{label: "Emby", page: "Emby"},
 		{label: "Series", page: "Series"},
-		{label: "Transcode media", args: []string{"movies", "transcode"}, prompt: "Media path"},
+		{label: "Transcode media", args: []string{"movies", "transcode"}, prompt: "Media path", confirm: true},
 		{label: "Generate .strm companions", args: []string{"strm"}, prompt: "Media path", confirm: true},
 		{label: "System Status", page: "System Status"},
 		{label: "Exit"},
@@ -71,7 +71,7 @@ var terminalMenus = map[string][]terminalChoice{
 		{label: "List episodes", args: []string{"series", "episodes"}, prompt: "Provider name | Series ID"},
 		{label: "Download series", args: []string{"series", "download"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
 		{label: "Download and process", args: []string{"series", "download", "--process"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
-		{label: "Transcode series", args: []string{"series", "transcode"}, prompt: "Media path"},
+		{label: "Transcode series", args: []string{"series", "transcode"}, prompt: "Media path", confirm: true},
 	},
 	"System Status": {
 		{label: "Show status", args: []string{"diagnostics"}},
@@ -414,6 +414,8 @@ func runTerminal(ctx context.Context) error {
 			state := progress.snapshot()
 			if state.total > 0 {
 				done := state.done + state.failed + state.skipped + state.cancelled
+				filled := min(12, 12*done/state.total)
+				frame = append(frame, "["+strings.Repeat("=", filled)+strings.Repeat(" ", 12-filled)+"]")
 				frame = append(frame, fmt.Sprintf("%d%% · %d/%d · %d failed · %d skipped · %d cancelled", 100*done/state.total, done, state.total, state.failed, state.skipped, state.cancelled))
 			}
 			if state.note != "" {

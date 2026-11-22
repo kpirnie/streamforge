@@ -32,7 +32,7 @@ type channelFields struct {
 }
 
 // SyncChannels creates missing channels and updates exact name matches.
-func (c *Client) SyncChannels(ctx context.Context, normalizer *regexp.Regexp, dryRun bool) (int, int, error) {
+func (c *Client) SyncChannels(ctx context.Context, normalizer *regexp.Regexp, dryRun bool, progress func(int, int, int, int)) (int, int, error) {
 	streams, err := list[streamRecord](ctx, c, streamsPath, nil)
 	if err != nil {
 		return 0, 0, err
@@ -68,6 +68,9 @@ func (c *Client) SyncChannels(ctx context.Context, normalizer *regexp.Regexp, dr
 	}
 
 	done := 0
+	if progress != nil {
+		progress(len(order), 0, 0, 0)
+	}
 	var failures []error
 	for _, name := range order {
 		if err := ctx.Err(); err != nil {
@@ -76,9 +79,15 @@ func (c *Client) SyncChannels(ctx context.Context, normalizer *regexp.Regexp, dr
 		id := ids[name]
 		if err := c.syncChannel(ctx, id, name, grouped[name]); err != nil {
 			failures = append(failures, fmt.Errorf("channel group %d: %w", done+len(failures)+1, err))
+			if progress != nil {
+				progress(len(order), done, len(failures), 0)
+			}
 			continue
 		}
 		done++
+		if progress != nil {
+			progress(len(order), done, len(failures), 0)
+		}
 	}
 	return done, len(failures), errors.Join(failures...)
 }

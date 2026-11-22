@@ -140,16 +140,22 @@ func itemPath(id string) (string, error) {
 }
 
 // ClearNumbers clears channel numbers and their related locks across Live TV.
-func (c *Client) ClearNumbers(ctx context.Context, dryRun bool) (Counts, error) {
+func (c *Client) ClearNumbers(ctx context.Context, dryRun bool, progress func(int, int, int, int)) (Counts, error) {
 	var counts Counts
 	channels, err := c.channels(ctx)
 	if err != nil {
 		return counts, err
 	}
 	var failures []error
+	if progress != nil {
+		progress(len(channels), 0, 0, 0)
+	}
 	for i, item := range channels {
 		if ctx.Err() != nil {
 			return counts, errors.Join(append(failures, ctx.Err())...)
+		}
+		if progress != nil {
+			progress(len(channels), counts.Done, counts.Failed, 0)
 		}
 		id, err := itemPath(item.ID)
 		if err == nil {
@@ -161,6 +167,9 @@ func (c *Client) ClearNumbers(ctx context.Context, dryRun bool) (Counts, error) 
 			continue
 		}
 		counts.Done++
+	}
+	if progress != nil {
+		progress(len(channels), counts.Done, counts.Failed, 0)
 	}
 	return counts, errors.Join(failures...)
 }

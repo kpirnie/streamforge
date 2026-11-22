@@ -88,3 +88,12 @@ func (p *operationProgress) cancel(label string) {
 		cancel()
 	}
 }
+
+func (p *operationProgress) items(total, done, failed, skipped int) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.total, p.done, p.failed, p.skipped, p.cancelled = total, done, failed, skipped, 0
+	p.mu.Unlock()
+}

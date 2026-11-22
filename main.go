@@ -278,7 +278,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 		if err != nil {
 			return err
 		}
-		return runEmby(ctx, client, action, playlist, dryRun, report)
+		return runEmby(ctx, client, action, playlist, dryRun, report, progress)
 	}
 	authContext, cancel := context.WithTimeout(ctx, timeout)
 	client, err := dispatcharr.Connect(authContext, base, user, password, agent, timeout, transport)
@@ -293,6 +293,8 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 	var failures []error
 	refreshFailed := false
 	for _, step := range actions {
+		progress.setTotal(0)
+		progress.status(step)
 		if ctx.Err() != nil {
 			return errors.Join(append(failures, ctx.Err())...)
 		}
@@ -307,7 +309,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 				report("Dispatcharr M3U refresh complete")
 			}
 		} else {
-			err = runDispatcharr(ctx, client, step, start, normalizer, dryRun, report)
+			err = runDispatcharr(ctx, client, step, start, normalizer, dryRun, report, progress)
 		}
 		if err != nil {
 			refreshFailed = step == "refresh"
@@ -327,13 +329,15 @@ func makeTransport(timeout time.Duration, verifyTLS bool) *http.Transport {
 	return transport
 }
 
-func runEmby(ctx context.Context, client *emby.Client, action, playlist string, dryRun bool, report func(string, ...any)) error {
+func runEmby(ctx context.Context, client *emby.Client, action, playlist string, dryRun bool, report func(string, ...any), progress *operationProgress) error {
 	actions := []string{action}
 	if action == "all" {
 		actions = []string{"refresh", "logos", "numbers"}
 	}
 	var failures []error
 	for _, step := range actions {
+		progress.setTotal(0)
+		progress.status(step)
 		if ctx.Err() != nil {
 			return errors.Join(append(failures, ctx.Err())...)
 		}
@@ -353,9 +357,9 @@ func runEmby(ctx context.Context, client *emby.Client, action, playlist string, 
 				}
 			}
 		case "logos":
-			counts, err = client.RefreshLogos(ctx, playlist, dryRun)
+			counts, err = client.RefreshLogos(ctx, playlist, dryRun, progress.items)
 		case "numbers":
-			counts, err = client.ClearNumbers(ctx, dryRun)
+			counts, err = client.ClearNumbers(ctx, dryRun, progress.items)
 		}
 		if step != "refresh" {
 			if dryRun {
@@ -371,7 +375,7 @@ func runEmby(ctx context.Context, client *emby.Client, action, playlist string, 
 	return errors.Join(failures...)
 }
 
-func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action string, start int, normalizer *regexp.Regexp, dryRun bool, report func(string, ...any)) error {
+func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action string, start int, normalizer *regexp.Regexp, dryRun bool, report func(string, ...any), progress *operationProgress) error {
 	switch action {
 	case "refresh":
 		if dryRun {
@@ -411,9 +415,9 @@ func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action stri
 	var done, failed int
 	var err error
 	if action == "create-update" {
-		done, failed, err = client.SyncChannels(ctx, normalizer, dryRun)
+		done, failed, err = client.SyncChannels(ctx, normalizer, dryRun, progress.items)
 	} else {
-		done, failed, err = client.UpdateChannels(ctx, action, start, dryRun)
+		done, failed, err = client.UpdateChannels(ctx, action, start, dryRun, progress.items)
 	}
 	if dryRun {
 		report("%s: would update %d channels", action, done)

@@ -90,7 +90,7 @@ func alphabetical(channels []channel) {
 }
 
 // UpdateChannels plans or applies the selected channel updates.
-func (c *Client) UpdateChannels(ctx context.Context, action string, start int, dryRun bool) (int, int, error) {
+func (c *Client) UpdateChannels(ctx context.Context, action string, start int, dryRun bool, progress func(int, int, int, int)) (int, int, error) {
 	query := make(url.Values)
 	if action == "renumber" || action == "reorder" {
 		query.Set("include_streams", "true")
@@ -177,6 +177,9 @@ func (c *Client) UpdateChannels(ctx context.Context, action string, start int, d
 	if dryRun {
 		return len(changes), 0, nil
 	}
+	if progress != nil {
+		progress(len(changes), 0, 0, 0)
+	}
 	var failures []error
 	done := 0
 	for _, change := range changes {
@@ -185,9 +188,15 @@ func (c *Client) UpdateChannels(ctx context.Context, action string, start int, d
 		}
 		if err := c.request(ctx, "PATCH", fmt.Sprintf("%s%d/", channelsPath, change.id), change.fields, nil); err != nil {
 			failures = append(failures, fmt.Errorf("channel %d: %w", change.id, err))
+			if progress != nil {
+				progress(len(changes), done, len(failures), 0)
+			}
 			continue
 		}
 		done++
+		if progress != nil {
+			progress(len(changes), done, len(failures), 0)
+		}
 	}
 	return done, len(failures), errors.Join(failures...)
 }

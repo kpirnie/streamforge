@@ -50,7 +50,7 @@ func runSTRM(ctx context.Context, args []string, parent, exclusions string, titl
 		if ctx.Err() != nil {
 			return errors.Join(append(failures, ctx.Err())...)
 		}
-		if _, err := media.WriteSTRM(ctx, root, path, parent, titles, dryRun); err != nil {
+		if _, err := media.WriteSTRM(ctx, root, path, "", parent, titles, dryRun); err != nil {
 			failures = append(failures, fmt.Errorf("companion %d: %w", count+len(failures)+1, err))
 			continue
 		}

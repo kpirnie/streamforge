@@ -20,20 +20,35 @@ import (
 
 func runTranscode(ctx context.Context, args []string, requested []string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress) error {
 	profile := media.Conversion{
-		FFmpeg:    value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg"),
-		FFprobe:   value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe"),
-		Codec:     value("STREAMFORGE_CODEC", "keep"),
-		Container: value("STREAMFORGE_CONTAINER", "keep"),
-		Quality:   value("STREAMFORGE_QUALITY", "balanced"),
-		Hardware:  value("STREAMFORGE_HARDWARE", "auto"),
+		FFmpeg:     value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg"),
+		FFprobe:    value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe"),
+		Codec:      value("STREAMFORGE_CODEC", "keep"),
+		Container:  value("STREAMFORGE_CONTAINER", "keep"),
+		Quality:    value("STREAMFORGE_QUALITY", "balanced"),
+		Hardware:   value("STREAMFORGE_HARDWARE", "auto"),
+		Resolution: value("STREAMFORGE_RESOLUTION", ""),
+		FrameRate:  value("STREAMFORGE_FRAME_RATE", ""),
+		Aspect:     value("STREAMFORGE_ASPECT", ""),
 	}
 	parent := value("STREAMFORGE_PLAYBACK_PARENT", "")
 	exclude := value("STREAMFORGE_EXCLUDE", "")
 	jobs := value("STREAMFORGE_JOBS", "")
 	var target string
-	var remove bool
+	force, err := strconv.ParseBool(value("STREAMFORGE_FORCE", "false"))
+	if err != nil {
+		return errors.New("STREAMFORGE_FORCE must be a boolean")
+	}
+	convertHDR, err := strconv.ParseBool(value("STREAMFORGE_CONVERT_HDR", "false"))
+	if err != nil {
+		return errors.New("STREAMFORGE_CONVERT_HDR must be a boolean")
+	}
+	remove, err := strconv.ParseBool(value("STREAMFORGE_DELETE_ORIGINAL", "false"))
+	if err != nil {
+		return errors.New("STREAMFORGE_DELETE_ORIGINAL must be a boolean")
+	}
+	profile.Force, profile.ConvertHDR = force, convertHDR
 	for _, arg := range args {
-		key, option, _ := strings.Cut(arg, "=")
+		key, option, supplied := strings.Cut(arg, "=")
 		switch key {
 		case "--codec":
 			profile.Codec = option
@@ -41,6 +56,12 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 			profile.Container = option
 		case "--quality":
 			profile.Quality = option
+		case "--resolution":
+			profile.Resolution = option
+		case "--frame-rate":
+			profile.FrameRate = option
+		case "--aspect":
+			profile.Aspect = option
 		case "--hardware":
 			profile.Hardware = option
 		case "--jobs":
@@ -49,12 +70,22 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 			exclude = option
 		case "--playback-parent":
 			parent = option
-		case "--convert-hdr":
-			profile.ConvertHDR = true
-		case "--force":
-			profile.Force = true
-		case "--delete-original":
-			remove = true
+		case "--convert-hdr", "--force", "--delete-original":
+			enabled := true
+			if supplied {
+				enabled, err = strconv.ParseBool(option)
+				if err != nil {
+					return errors.New("transcode switch must be a boolean")
+				}
+			}
+			switch key {
+			case "--convert-hdr":
+				profile.ConvertHDR = enabled
+			case "--force":
+				profile.Force = enabled
+			case "--delete-original":
+				remove = enabled
+			}
 		default:
 			if strings.HasPrefix(arg, "-") || target != "" {
 				return errors.New("unexpected transcode argument")
@@ -73,12 +104,14 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 	}
 	capacity := max(runtime.GOMAXPROCS(0), 1)
 	parallel := max(1, capacity/2)
+	budget := parallel
 	if jobs != "" {
 		count, err := strconv.Atoi(jobs)
 		if err != nil || count < 1 {
 			return errors.New("transcode jobs must be a positive integer")
 		}
 		parallel = min(count, capacity)
+		budget = capacity
 	}
 	root, err := os.OpenRoot(media.Working)
 	if err != nil {
@@ -144,6 +177,17 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 	if err != nil {
 		return err
 	}
+	preferred := profile.PreferredEncoder(encoders)
+	if preferred != "" {
+		cap := 1
+		if jobs != "" {
+			cap = 2
+		}
+		parallel = min(parallel, cap)
+	} else if profile.Hardware != "auto" && profile.Hardware != "cpu" && profile.Codec != "keep" {
+		report("Requested hardware encoder unavailable; using CPU")
+	}
+	profile.Threads = max(1, budget/parallel)
 	var mu sync.Mutex
 	progress.setTotal(len(queue))
 	var failures, postFailures []error
@@ -169,11 +213,11 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 				if info, statErr := root.Lstat(item.output); statErr == nil && info.Mode().IsRegular() {
 					target = item.output
 				}
-				_, companionErr = media.WriteSTRM(ctx, root, target, parent, titles, false)
+				_, companionErr = media.WriteSTRM(ctx, root, target, item.input, parent, titles, false)
 			}
 			if err == nil && !skip {
 				if parent != "" {
-					_, companionErr = media.WriteSTRM(ctx, root, item.output, parent, titles, false)
+					_, companionErr = media.WriteSTRM(ctx, root, item.output, item.input, parent, titles, false)
 				}
 				if remove && ctx.Err() == nil {
 					current, err := root.Lstat(item.input)

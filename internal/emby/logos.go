@@ -136,7 +136,7 @@ func (c *Client) downloadLogo(ctx context.Context, rawURL string) (logo, error) 
 }
 
 // RefreshLogos updates the three legacy Emby logo variants using unique playlist matches.
-func (c *Client) RefreshLogos(ctx context.Context, playlistURL string, dryRun bool) (Counts, error) {
+func (c *Client) RefreshLogos(ctx context.Context, playlistURL string, dryRun bool, progress func(int, int, int, int)) (Counts, error) {
 	var counts Counts
 	channels, err := c.channels(ctx)
 	if err != nil {
@@ -153,6 +153,9 @@ func (c *Client) RefreshLogos(ctx context.Context, playlistURL string, dryRun bo
 	cache := make(map[string]cachedLogo)
 	var failures []error
 	for i, item := range channels {
+		if progress != nil {
+			progress(len(channels), counts.Done, counts.Failed, counts.Unmatched)
+		}
 		if ctx.Err() != nil {
 			return counts, errors.Join(append(failures, ctx.Err())...)
 		}
@@ -185,6 +188,9 @@ func (c *Client) RefreshLogos(ctx context.Context, playlistURL string, dryRun bo
 			continue
 		}
 		counts.Done++
+	}
+	if progress != nil {
+		progress(len(channels), counts.Done, counts.Failed, counts.Unmatched)
 	}
 	return counts, errors.Join(failures...)
 }

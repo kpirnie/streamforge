@@ -125,7 +125,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 		})
 		var companionErr error
 		if result == nil && !command.process {
-			_, companionErr = media.WriteSTRM(ctx, root, path, parent, titles, false)
+			_, companionErr = media.WriteSTRM(ctx, root, path, "", parent, titles, false)
 		}
 		mu.Lock()
 		defer mu.Unlock()

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,13 +25,14 @@ var movieFilename = regexp.MustCompile(`^(.+?)[ ._(-]+((?:19|20)\d\d)(?:[ ._)\]-
 
 // Titles resolves companion names through TMDB for a single session.
 type Titles struct {
-	client *http.Client
-	key    string
-	agent  string
-	report func(string, ...any)
-	mu     sync.Mutex
-	cache  map[string]string
-	next   time.Time
+	client  *http.Client
+	key     string
+	agent   string
+	report  func(string, ...any)
+	mu      sync.Mutex
+	cache   map[string]string
+	pending map[string]chan struct{}
+	next    time.Time
 }
 
 // NewTitles creates a session-only look-up cache if the operator supplied a key.
@@ -38,7 +40,7 @@ func NewTitles(key, agent string, timeout time.Duration, transport http.RoundTri
 	if key == "" {
 		return nil
 	}
-	return &Titles{key: key, agent: agent, report: report, cache: make(map[string]string),
+	return &Titles{key: key, agent: agent, report: report, cache: make(map[string]string), pending: make(map[string]chan struct{}),
 		client: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
@@ -78,7 +80,22 @@ func (t *Titles) lookup(ctx context.Context, kind, query, year string) string {
 		t.mu.Unlock()
 		return name
 	}
+	if pending, ok := t.pending[key]; ok {
+		t.mu.Unlock()
+		select {
+		case <-pending:
+		case <-ctx.Done():
+			return ""
+		}
+		t.mu.Lock()
+		name := t.cache[key]
+		t.mu.Unlock()
+		return name
+	}
+	pending := make(chan struct{})
+	t.pending[key] = pending
 	t.mu.Unlock()
+
 	params := url.Values{"query": {query}, "api_key": {t.key}}
 	if year != "" {
 		params.Set("year", year)
@@ -100,6 +117,8 @@ func (t *Titles) lookup(ctx context.Context, kind, query, year string) string {
 	}
 	t.mu.Lock()
 	t.cache[key] = name
+	delete(t.pending, key)
+	close(pending)
 	t.mu.Unlock()
 	return name
 }
@@ -127,7 +146,13 @@ func (t *Titles) search(ctx context.Context, kind string, params url.Values) (bo
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		if date, parseErr := http.ParseTime(res.Header.Get("Retry-After")); parseErr == nil {
+		header := res.Header.Get("Retry-After")
+		date, parseErr := http.ParseTime(header)
+		if seconds, err := strconv.ParseInt(header, 10, 32); err == nil && seconds >= 0 {
+			date = time.Now().Add(time.Duration(seconds) * time.Second)
+			parseErr = nil
+		}
+		if parseErr == nil {
 			t.mu.Lock()
 			if t.next.Before(date) {
 				t.next = date
@@ -160,7 +185,9 @@ func (t *Titles) search(ctx context.Context, kind string, params url.Values) (bo
 		return r
 	}, name), ". ")
 	if name != "" && kind == "movie" && len(item.ReleaseDate) >= 4 {
-		name += " (" + item.ReleaseDate[:4] + ")"
+		if year, err := strconv.Atoi(item.ReleaseDate[:4]); err == nil && year >= 1000 {
+			name += " (" + item.ReleaseDate[:4] + ")"
+		}
 	}
 	return false, name, nil
 }

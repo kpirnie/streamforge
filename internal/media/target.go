@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -96,4 +97,30 @@ func SelectTarget(root *os.Root, output, input string, reserved map[string]bool)
 			return "", err
 		}
 	}
+}
+
+func markSource(file *os.File, source string) error {
+	err := syscall.Setxattr(descriptor(file), sourceAttribute, []byte(fingerprint(source)), 0)
+	if errors.Is(err, syscall.ENOTSUP) {
+		return nil
+	}
+	return err
+}
+
+func previousCompanion(root *os.Root, destination, source string) bool {
+	file, err := root.OpenFile(destination, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 8<<10))
+	if err != nil {
+		return false
+	}
+	target := strings.TrimSuffix(string(data), "\n")
+	return filepath.IsAbs(target) && strings.HasSuffix(target, "/"+source) && !strings.ContainsAny(target, "\r\n")
 }
