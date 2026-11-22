@@ -84,6 +84,11 @@ func excluded(name string, patterns []string) bool {
 
 // WriteSTRM writes a companion for an existing media file using the player's mount root.
 func WriteSTRM(ctx context.Context, root *os.Root, mediaPath, source, parent string, titles *Titles, dryRun bool) (string, error) {
+	return WriteSTRMIn(ctx, root, mediaPath, source, parent, "", titles, dryRun)
+}
+
+// WriteSTRMIn writes a companion in a directory relative to the output tree.
+func WriteSTRMIn(ctx context.Context, root *os.Root, mediaPath, source, parent, directory string, titles *Titles, dryRun bool) (string, error) {
 	if !filepath.IsAbs(parent) || strings.ContainsAny(parent, "\r\n") {
 		return "", errors.New("playback parent must be an absolute path")
 	}
@@ -98,7 +103,13 @@ func WriteSTRM(ctx context.Context, root *os.Root, mediaPath, source, parent str
 	if !info.Mode().IsRegular() {
 		return "", errors.New("companion target must be a regular media file")
 	}
-	destination := filepath.Join("output", filepath.Dir(relative), titles.basename(ctx, relative, dryRun)+".strm")
+	if directory == "" {
+		directory = filepath.Dir(relative)
+	}
+	if !filepath.IsLocal(directory) {
+		return "", errors.New("invalid output directory for companion")
+	}
+	destination := filepath.Join("output", directory, titles.basename(ctx, relative, dryRun)+".strm")
 	if dryRun {
 		return destination, nil
 	}

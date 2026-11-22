@@ -201,7 +201,7 @@ streamforge series download \
   --select="Other Provider|987|321,322"
 ~~~
 
-Download-only validates each episode with FFprobe and writes its companion. `--process` waits for the download batch, then sends successful downloads through the transcode profile. Originals stay in `input` by default under provider and series directories. Existing episodes are skipped. Use `--redownload --yes` to replace them after validation. A failed replacement preserves the previous file. Recoverable transfer failures can resume within the same run when the provider supports HTTP Range.
+Download-only validates each new episode with FFprobe and writes its companion. `--process` waits for the download batch, then sends successful downloads through the transcode profile. Series companions and processed videos go under `output/<Series Name>/Season NN/`. Originals stay in `input` by default under provider and series directories. Download-only refreshes companions for existing episodes without transferring the videos again. Use `--redownload --yes` to replace videos after validation. A failed replacement preserves the previous file. Recoverable transfer failures can resume within the same run when the provider supports HTTP Range.
 
 ### Transcode and generate companions
 

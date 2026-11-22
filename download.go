@@ -112,10 +112,11 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	var mu sync.Mutex
 	var companionFailures []error
 	var done, skipped, cancelled int
-	var completed []string
+	completed := make(map[string]string)
 	progress.setTotal(len(paths))
 	transferEpisode := func(provider string, episode xtream.Episode, transfer func(context.Context, *os.File, func() error) error) {
 		path := downloadPath(provider, episode)
+		directory := filepath.Join(episode.SeriesName, fmt.Sprintf("Season %02d", episode.Season))
 		work, finish := progress.begin(ctx, fmt.Sprintf("%s · series %s · episode %s", provider, episode.SeriesID, episode.ID))
 		result := media.AtomicWrite(work, root, path, 0666, command.redownload, func(file *os.File) error {
 			return transfer(work, file, func() error {
@@ -124,16 +125,20 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 			})
 		})
 		var companionErr error
-		if result == nil && !command.process {
-			_, companionErr = media.WriteSTRM(ctx, root, path, "", parent, titles, false)
+		existing := errors.Is(result, os.ErrExist) && !command.redownload
+		if !command.process && (result == nil || existing) && work.Err() == nil {
+			_, companionErr = media.WriteSTRMIn(work, root, path, "", parent, directory, titles, false)
 		}
 		mu.Lock()
 		defer mu.Unlock()
+		if companionErr != nil {
+			companionFailures = append(companionFailures, fmt.Errorf("episode %s companion: %w", episode.ID, companionErr))
+		}
 		switch {
 		case result != nil && work.Err() != nil:
 			cancelled++
 			finish("cancelled")
-		case errors.Is(result, os.ErrExist) && !command.redownload:
+		case existing:
 			skipped++
 			finish("skipped")
 		case result != nil:
@@ -143,10 +148,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 			done++
 			finish("done")
 			if command.process {
-				completed = append(completed, path)
-			}
-			if companionErr != nil {
-				companionFailures = append(companionFailures, fmt.Errorf("episode %s companion: %w", episode.ID, companionErr))
+				completed[path] = directory
 			}
 		}
 	}

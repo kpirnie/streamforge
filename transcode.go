@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,7 +20,7 @@ import (
 	"github.com/kpirnie/streamforge/internal/media"
 )
 
-func runTranscode(ctx context.Context, args []string, requested []string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress) error {
+func runTranscode(ctx context.Context, args []string, seriesDirectories map[string]string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress) error {
 	profile := media.Conversion{
 		FFmpeg:     value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg"),
 		FFprobe:    value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe"),
@@ -93,7 +95,7 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 			target = arg
 		}
 	}
-	if target == "" && len(requested) == 0 {
+	if target == "" && len(seriesDirectories) == 0 {
 		return errors.New("transcode requires a media path")
 	}
 	if parent != "" && (!filepath.IsAbs(parent) || strings.ContainsAny(parent, "\r\n")) {
@@ -122,8 +124,9 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 	if exclude != "" {
 		patterns = strings.Split(exclude, ",")
 	}
-	fromDownload := len(requested) > 0
-	if len(requested) == 0 {
+	fromDownload := len(seriesDirectories) > 0
+	requested := slices.Sorted(maps.Keys(seriesDirectories))
+	if !fromDownload {
 		requested = []string{target}
 	}
 	var files []string
@@ -151,6 +154,9 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 		}
 		estimate += uint64(info.Size())
 		output, muxer := profile.Target(input)
+		if directory := seriesDirectories[input]; directory != "" {
+			output = filepath.Join("output", directory, filepath.Base(output))
+		}
 		output, err = media.SelectTarget(root, output, input, seen)
 		if err != nil {
 			return err
@@ -213,11 +219,11 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 				if info, statErr := root.Lstat(item.output); statErr == nil && info.Mode().IsRegular() {
 					target = item.output
 				}
-				_, companionErr = media.WriteSTRM(ctx, root, target, item.input, parent, titles, false)
+				_, companionErr = media.WriteSTRMIn(ctx, root, target, item.input, parent, seriesDirectories[item.input], titles, false)
 			}
 			if err == nil && !skip {
 				if parent != "" {
-					_, companionErr = media.WriteSTRM(ctx, root, item.output, item.input, parent, titles, false)
+					_, companionErr = media.WriteSTRMIn(ctx, root, item.output, item.input, parent, seriesDirectories[item.input], titles, false)
 				}
 				if remove && ctx.Err() == nil {
 					current, err := root.Lstat(item.input)

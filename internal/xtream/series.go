@@ -40,13 +40,14 @@ type SearchGroup struct {
 
 // Episode identifies a downloadable provider item and its legacy output name.
 type Episode struct {
-	SizeBytes uint64
-	SeriesID  string
-	ID        string
-	Name      string
-	Extension string
-	Season    int
-	Number    int
+	SizeBytes  uint64
+	SeriesID   string
+	ID         string
+	SeriesName string
+	Name       string
+	Extension  string
+	Season     int
+	Number     int
 }
 
 // Search queries the selected providers concurrently and groups exact matches before partial matches.
@@ -259,7 +260,7 @@ func (p *Providers) Episodes(ctx context.Context, providerName, seriesID string)
 			if size == 0 {
 				size, _ = strconv.ParseUint(string(record.Info.Size), 10, 64)
 			}
-			episodes = append(episodes, Episode{SizeBytes: size, SeriesID: seriesID, ID: string(record.ID), Name: name, Extension: extension, Season: season, Number: episode})
+			episodes = append(episodes, Episode{SizeBytes: size, SeriesID: seriesID, ID: string(record.ID), SeriesName: filenameTitle, Name: name, Extension: extension, Season: season, Number: episode})
 		}
 	}
 	slices.SortStableFunc(episodes, func(a, b Episode) int {
