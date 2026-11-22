@@ -35,6 +35,8 @@ type terminalChoice struct {
 	mark    string
 	season  int
 	episode string
+	key     seriesKey
+	movie   xtream.Movie
 	setting string
 	secret  bool
 }
@@ -43,7 +45,7 @@ var terminalMenus = map[string][]terminalChoice{
 	"Main": {
 		{label: "Dispatcharr", page: "Dispatcharr"},
 		{label: "Emby", page: "Emby"},
-		{label: "Series", page: "Series"},
+		{label: "Downloads", page: "Downloads"},
 		{label: "Transcode media", args: []string{"movies", "transcode"}, prompt: "Media path", confirm: true},
 		{label: "Generate .strm companions", args: []string{"strm"}, prompt: "Media path", confirm: true},
 		{label: "System Status", page: "System Status"},
@@ -66,13 +68,14 @@ var terminalMenus = map[string][]terminalChoice{
 		{label: "Numbers", args: []string{"emby", "numbers"}, confirm: true},
 		{label: "All", args: []string{"emby", "all"}, confirm: true},
 	},
-	"Series": {
-		{label: "Search providers", args: []string{"series", "search"}, prompt: "Title"},
+	"Downloads": {
+		{label: "Search series", args: []string{"series", "search"}, prompt: "Title"},
+		{label: "Search movies", args: []string{"movies", "search"}, prompt: "Title"},
 		{label: "Download queue", page: downloadQueue},
 		{label: "List episodes", args: []string{"series", "episodes"}, prompt: "Provider name | Series ID"},
 		{label: "Download series", args: []string{"series", "download"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
-		{label: "Download and process", args: []string{"series", "download", "--process"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
-		{label: "Transcode series", args: []string{"series", "transcode"}, prompt: "Media path", confirm: true},
+		{label: "Download and process series", args: []string{"series", "download", "--process"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
+		{label: "Transcode media", args: []string{"movies", "transcode"}, prompt: "Media path", confirm: true},
 	},
 	"System Status": {
 		{label: "Show status", args: []string{"diagnostics"}},
@@ -293,7 +296,7 @@ func runTerminal(ctx context.Context) error {
 	var arguments []string
 	var result string
 	var discovered seriesDiscovery
-	browser := terminalSeries{selected: make(map[seriesKey]map[string]bool)}
+	browser := terminalSeries{selected: make(map[seriesKey]map[string]string), movies: make(map[seriesKey]xtream.Movie)}
 	if len(terminalSettings(settings, values)) > 1 {
 		page = sessionSettings
 	}
@@ -374,7 +377,7 @@ func runTerminal(ctx context.Context) error {
 		}
 		available := make([]terminalChoice, 0, len(menu))
 		for _, item := range menu {
-			if providerErr != nil && page == "Series" && (item.page == downloadQueue || (len(item.args) > 1 && item.args[1] != "transcode")) {
+			if providerErr != nil && page == "Downloads" && (item.page == downloadQueue || (len(item.args) > 1 && item.args[1] != "transcode")) {
 				item.label += " (disabled)"
 				item.args = []string{"diagnostics"}
 				item.prompt = ""
@@ -462,7 +465,7 @@ func runTerminal(ctx context.Context) error {
 			scroll = min(scroll, max(0, len(lines)-slots))
 			frame = append(frame, lines[scroll:min(len(lines), scroll+slots)]...)
 			footer = "↑↓ Scroll   Enter Return   Ctrl+C Exit"
-			if len(discovered.groups) > 0 || len(discovered.episodes) > 0 {
+			if len(discovered.groups) > 0 || len(discovered.movies) > 0 || len(discovered.episodes) > 0 {
 				footer = "B Browse   ↑↓ Scroll   Enter Return"
 			}
 			if mode == "startup" {

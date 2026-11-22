@@ -21,6 +21,7 @@ type cachedProviders struct {
 	err       error
 }
 type seriesDiscovery struct {
+	movies   []xtream.MovieGroup
 	groups   []xtream.SearchGroup
 	episodes []xtream.Episode
 	provider string
@@ -41,6 +42,7 @@ type seriesCommand struct {
 	redownload bool
 	process    bool
 	selections []seriesSelection
+	movies     map[string]map[string]bool
 }
 
 func parseSeries(args []string) (seriesCommand, error) {
@@ -70,6 +72,23 @@ func parseSeries(args []string) (seriesCommand, error) {
 				return command, err
 			}
 			command.selections = append(command.selections, pick)
+		case strings.HasPrefix(arg, "--movie="):
+			selection := strings.TrimPrefix(arg, "--movie=")
+			separator := strings.LastIndexByte(selection, '|')
+			if separator < 0 {
+				return command, errors.New("movie selection requires Provider|Movie ID")
+			}
+			provider, id := strings.TrimSpace(selection[:separator]), strings.TrimSpace(selection[separator+1:])
+			if provider == "" || id == "" {
+				return command, errors.New("movie selection requires Provider|Movie ID")
+			}
+			if command.movies == nil {
+				command.movies = make(map[string]map[string]bool)
+			}
+			if command.movies[provider] == nil {
+				command.movies[provider] = make(map[string]bool)
+			}
+			command.movies[provider][id] = true
 		case arg == "--all-episodes":
 			command.allEpisodes = true
 		case arg == "--process":
@@ -84,7 +103,7 @@ func parseSeries(args []string) (seriesCommand, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	if command.action != "download" && (command.allEpisodes || command.redownload || command.process || len(command.episodes) > 0 || len(command.selections) > 0) {
+	if command.action != "download" && (command.allEpisodes || command.redownload || command.process || len(command.episodes) > 0 || len(command.selections) > 0 || len(command.movies) > 0) {
 		return command, errors.New("episode selection flags apply to series download")
 	}
 	switch command.action {
@@ -94,7 +113,7 @@ func parseSeries(args []string) (seriesCommand, error) {
 			return command, errors.New("series search requires a title")
 		}
 	case "download":
-		if len(command.selections) > 0 {
+		if len(command.selections) > 0 || len(command.movies) > 0 {
 			if command.provider != "" || len(positionals) != 0 || command.allEpisodes || len(command.episodes) > 0 {
 				return command, errors.New("use --select entries or a single provider selection")
 			}
@@ -131,6 +150,46 @@ func parseSelection(raw string) (seriesSelection, error) {
 		}
 	}
 	return selection, nil
+}
+
+func runMovieSearch(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any), discovery *seriesDiscovery) error {
+	groups, err := providers.SearchMovies(ctx, command.argument, command.provider)
+	if err != nil {
+		return err
+	}
+	if discovery != nil {
+		discovery.movies = groups
+	}
+	failed := 0
+	for _, group := range groups {
+		if group.Err != nil {
+			warn("Xtream provider %s: %s", group.Provider, group.Err)
+			failed++
+			continue
+		}
+		fmt.Fprintln(out, group.Provider)
+		for _, movie := range group.Movies {
+			fmt.Fprintf(out, "  %s\t%s\n", movie.ID, movieLabel(movie))
+		}
+		if len(group.Movies) == 0 {
+			fmt.Fprintln(out, "  No matches")
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("movie search failed for %d of %d providers", failed, len(groups))
+	}
+	return nil
+}
+
+func movieLabel(movie xtream.Movie) string {
+	title := movie.Title
+	if movie.Year != "" && !strings.Contains(title, "("+movie.Year+")") {
+		title += " (" + movie.Year + ")"
+	}
+	if movie.Quality != "" && !strings.Contains(strings.ToLower(title), strings.ToLower(movie.Quality)) {
+		title += " · " + movie.Quality
+	}
+	return title + " · " + strings.ToUpper(movie.Extension)
 }
 
 func runSeries(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any), discovery *seriesDiscovery) error {

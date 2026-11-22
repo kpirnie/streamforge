@@ -92,7 +92,11 @@ func (p *Providers) download(ctx context.Context, entry provider, episode Episod
 	if !validID(episode.ID) || !extensionPattern.MatchString(episode.Extension) {
 		return errors.New("invalid Xtream episode ID or extension")
 	}
-	target := entry.url.JoinPath("series")
+	kind := "series"
+	if episode.Movie {
+		kind = "movie"
+	}
+	target := entry.url.JoinPath(kind)
 	// Escape each path segment separately because provider credentials may contain delimiters.
 	target.RawPath = strings.TrimRight(target.EscapedPath(), "/") + "/" + url.PathEscape(entry.settings.Username) + "/" + url.PathEscape(entry.settings.Password) + "/" + episode.ID + "." + episode.Extension
 	decoded, err := url.PathUnescape(target.RawPath)

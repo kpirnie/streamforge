@@ -12,7 +12,7 @@
 [![Kevin Pirnie](https://img.shields.io/badge/-KevinPirnie.com-000d2d?style=for-the-badge&labelColor=000&logoColor=white&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIxLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgPGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiLz4KICA8ZWxsaXBzZSBjeD0iMTIiIGN5PSIxMiIgcng9IjQuNSIgcnk9IjEwIi8+CiAgPGxpbmUgeDE9IjIiIHkxPSIxMiIgeDI9IjIyIiB5Mj0iMTIiLz4KICA8bGluZSB4MT0iNC41IiB5MT0iNi41IiB4Mj0iMTkuNSIgeTI9IjYuNSIvPgogIDxsaW5lIHgxPSI0LjUiIHkxPSIxNy41IiB4Mj0iMTkuNSIgeTI9IjE3LjUiLz4KPC9zdmc+Cg==)](https://kevinpirnie.com/)
 
 
-Stream Forge is a Linux terminal application for administering Dispatcharr and Emby, downloading Xtream series, transcoding media, and generating `.strm` companions. Run it with no arguments in a terminal for the interactive menu. Pass a command for a single operation, a script, or a cron job.
+Stream Forge is a Linux terminal application for administering Dispatcharr and Emby, downloading Xtream movies and series, transcoding media, and generating `.strm` companions. Run it with no arguments in a terminal for the interactive menu. Pass a command for a single operation, a script, or a cron job.
 
 ## Quick start with Compose
 
@@ -129,7 +129,7 @@ Each top-level key in `providers.json` is a provider name. The name shown in sea
 | --- | --- |
 | `url`, `username`, `password` | Required provider base URL and login. |
 | `priority` | Lower numbers appear first. Names break ties alphabetically. Default `0`. |
-| `concurrent` | Maximum simultaneous episode transfers across that provider’s selected series. Default `1`. |
+| `concurrent` | Maximum simultaneous movie and episode transfers per provider. Default `1`. |
 | `retries` | Retry budget for recoverable download failures. Default `2`. |
 | `retry_delay` | Initial retry delay as a duration. Default `1s`. |
 | `bandwidth_kbps` | Aggregate limit per provider in KB/s. Default `0` for unlimited. |
@@ -203,6 +203,15 @@ streamforge series download \
 
 Download-only validates each new episode with FFprobe and writes its companion. `--process` waits for the download batch, then sends successful downloads through the transcode profile. Series companions and processed videos go under `output/<Series Name>/Season NN/`. Originals stay in `input` by default under provider and series directories. Download-only refreshes companions for existing episodes without transferring the videos again. Use `--redownload --yes` to replace videos after validation. A failed replacement preserves the previous file. Recoverable transfer failures can resume within the same run when the provider supports HTTP Range.
 
+### Xtream movies
+
+Search for a movie and use the provider name and movie ID from the results to download it. Add `--process` to apply the transcode profile after downloading. Movie companions and processed videos go under `output/Movies/<Movie Name (Year)>/` when the provider supplies a year.
+
+```bash
+streamforge movies search "Example Movie"
+streamforge movies download --movie="Example Provider|123" --process
+```
+
 ### Transcode and generate companions
 
 ~~~sh
@@ -248,7 +257,7 @@ The report includes build information, runtime, service status, mounted paths, m
 
 Choose **Continue with Defaults** or enter the settings available for the session. Use arrow keys to move, type to filter the current list, and press Enter to select. Protected actions present a preview. Press Y to proceed or Enter to decline. Results stay visible until you return. Esc goes back or cancels the active operation. Ctrl+C exits.
 
-For series, open **Search providers** and choose a match from the results menu. Choose **Add All Episodes to Download Queue** or toggle individual episodes and seasons. You can queue episodes across providers, then choose **Download Only** or **Download and Process** from the **Download queue**. If some providers fail, press B on the search report to browse any available matches. During a transfer, use the arrows and X to cancel one active download, or Esc to cancel the batch.
+Open **Downloads** and choose **Search movies** or **Search series**. Select a movie to toggle it in the queue. For a series match, choose **Add All Episodes to Download Queue** or toggle individual episodes and seasons. The shared **Download queue** lets you review or remove selections before choosing **Download Only** or **Download and Process**. If some providers fail, press B on the search report to browse any available matches. During a transfer, use the arrows and X to cancel one active download, or Esc to cancel the batch.
 
 **System Status** shows connectivity and tool availability and offers **Retry Connections**, **Copy Diagnostics**, and **Save diagnostics**. Clipboard copy uses the terminal when supported and saves a report otherwise.
 

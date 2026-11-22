@@ -74,6 +74,8 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			fmt.Fprintln(out, "Usage: streamforge diagnostics [--json] [--save]")
 		}
 		if len(command) == 0 || command[0] == "movies" {
+			fmt.Fprintln(out, "Usage: streamforge movies search [--provider NAME] TITLE")
+			fmt.Fprintln(out, "       streamforge movies download --movie='Provider|Movie ID' [--process]")
 			fmt.Fprintln(out, "Usage: streamforge movies transcode PATH [--codec=keep|hevc|av1] [--container=keep|mkv|mp4] [--force] [--convert-hdr]")
 		}
 		if len(command) == 0 || command[0] == "strm" {
@@ -119,11 +121,10 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			return errors.New("unknown Dispatcharr command. Run streamforge dispatcharr --help")
 		}
 	case "strm":
-	case "movies":
-		if action != "transcode" {
-			return errors.New("select movies transcode")
+	case "movies", "series":
+		if service == "movies" && action != "search" && action != "download" && action != "transcode" {
+			return errors.New("select movies search, download, or transcode")
 		}
-	case "series":
 		if action == "transcode" {
 			break
 		}
@@ -132,6 +133,9 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			return err
 		}
 		series = parsed
+		if service == "movies" && action == "download" && len(series.movies) == 0 {
+			return errors.New("movies download requires --movie='Provider|Movie ID'")
+		}
 	case "emby":
 		switch action {
 		case "refresh", "logos", "numbers", "all":
@@ -234,7 +238,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 		message("INFO", out, format, args...)
 	}
 	parent := value("STREAMFORGE_PLAYBACK_PARENT", "")
-	if !dryRun && (service == "strm" || service == "movies" || (service == "series" && (action == "download" || action == "transcode")) || (service == "dispatcharr" && action == "export")) {
+	if !dryRun && (service == "strm" || ((service == "series" || service == "movies") && (action == "download" || action == "transcode")) || (service == "dispatcharr" && action == "export")) {
 		if root, err := os.OpenRoot(workDir); err == nil {
 			cleanupErr := media.CleanTemporary(root)
 			root.Close()
@@ -253,7 +257,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 	if service == "strm" {
 		return runSTRM(ctx, command[1:], parent, value("STREAMFORGE_EXCLUDE", ""), titles, dryRun, report)
 	}
-	if service == "series" {
+	if service == "series" || service == "movies" {
 		var providers *xtream.Providers
 		var err error
 		if providerCache != nil {
@@ -270,6 +274,9 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 		}
 		if series.action == "download" {
 			return runDownload(ctx, providers, series, parent, titles, value, dryRun, yes || !confirm, report, progress)
+		}
+		if service == "movies" {
+			return runMovieSearch(ctx, providers, series, out, func(format string, args ...any) { message("WARN", stderr, format, args...) }, discovery)
 		}
 		return runSeries(ctx, providers, series, out, func(format string, args ...any) { message("WARN", stderr, format, args...) }, discovery)
 	}

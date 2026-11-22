@@ -18,6 +18,7 @@ import (
 
 const (
 	matchingSeries   = "Series search results"
+	matchingMovies   = "Movie search results"
 	matchingEpisodes = "Series episodes"
 	downloadQueue    = "Download queue"
 )
@@ -25,14 +26,29 @@ const (
 type seriesKey struct{ provider, id string }
 
 type terminalSeries struct {
-	groups     []xtream.SearchGroup
-	listing    seriesDiscovery
-	selected   map[seriesKey]map[string]bool
-	redownload bool
+	groups      []xtream.SearchGroup
+	movieGroups []xtream.MovieGroup
+	listing     seriesDiscovery
+	selected    map[seriesKey]map[string]string
+	movies      map[seriesKey]xtream.Movie
+	redownload  bool
 }
 
 func (s *terminalSeries) choices(page string) []terminalChoice {
 	switch page {
+	case matchingMovies:
+		var choices []terminalChoice
+		for _, group := range s.movieGroups {
+			for _, movie := range group.Movies {
+				key := seriesKey{group.Provider, movie.ID}
+				marker := "[ ] "
+				if _, queued := s.movies[key]; queued {
+					marker = "[x] "
+				}
+				choices = append(choices, terminalChoice{label: marker + movieLabel(movie) + " [" + group.Provider + "]", mark: "movie", key: key, movie: movie})
+			}
+		}
+		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
 	case matchingSeries:
 		var choices []terminalChoice
 		for _, group := range s.groups {
@@ -71,7 +87,7 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 					label += " · downloaded"
 				}
 			}
-			if s.selected[key][episode.ID] {
+			if s.selected[key][episode.ID] != "" {
 				label = "[x] " + label
 			} else {
 				label = "[ ] " + label
@@ -80,7 +96,7 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 		}
 		return choices
 	case downloadQueue:
-		selected := 0
+		selected := len(s.movies)
 		for _, ids := range s.selected {
 			selected += len(ids)
 		}
@@ -94,7 +110,21 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 			{label: "Replace existing downloads (" + state + ")", mark: "replace"},
 			{label: "Clear selections", mark: "clear"},
 		}
-		return choices
+		var queued []terminalChoice
+		for key, movie := range s.movies {
+			label := fmt.Sprintf("Remove %s [%s · %s]", movieLabel(movie), key.provider, key.id)
+			queued = append(queued, terminalChoice{label: label, mark: "remove-movie", key: key})
+		}
+		for key, ids := range s.selected {
+			for id, title := range ids {
+				label := fmt.Sprintf("Remove %s [%s · %s/%s]", title, key.provider, key.id, id)
+				queued = append(queued, terminalChoice{label: label, mark: "remove-episode", key: key, episode: id})
+			}
+		}
+		slices.SortFunc(queued, func(a, b terminalChoice) int {
+			return cmp.Compare(a.label, b.label)
+		})
+		return append(choices, queued...)
 	default:
 		return terminalMenus[page]
 	}
@@ -109,31 +139,53 @@ func (s *terminalSeries) mark(choice terminalChoice) []string {
 		return nil
 	case "clear":
 		clear(s.selected)
+		clear(s.movies)
+		return nil
+	case "movie":
+		if _, queued := s.movies[choice.key]; queued {
+			delete(s.movies, choice.key)
+		} else {
+			s.movies[choice.key] = choice.movie
+		}
+		return nil
+	case "remove-movie":
+		delete(s.movies, choice.key)
+		return nil
+	case "remove-episode":
+		delete(s.selected[choice.key], choice.episode)
 		return nil
 	}
 	key := seriesKey{s.listing.provider, s.listing.seriesID}
 	ids := s.selected[key]
 	if ids == nil {
-		ids = make(map[string]bool)
+		ids = make(map[string]string)
 		s.selected[key] = ids
+	}
+	queueEpisode := func(item xtream.Episode) {
+		ids[item.ID] = fmt.Sprintf("%s · S%02dE%02d", s.listing.title, item.Season, item.Number)
 	}
 	switch choice.mark {
 	case "all":
 		for _, item := range s.listing.episodes {
-			ids[item.ID] = true
+			queueEpisode(item)
 		}
 	case "none":
 		clear(ids)
 	case "episode":
-		if ids[choice.episode] {
+		if ids[choice.episode] != "" {
 			delete(ids, choice.episode)
 		} else {
-			ids[choice.episode] = true
+			for _, item := range s.listing.episodes {
+				if item.ID == choice.episode {
+					queueEpisode(item)
+					break
+				}
+			}
 		}
 	case "season":
 		all := true
 		for _, item := range s.listing.episodes {
-			if item.Season == choice.season && !ids[item.ID] {
+			if item.Season == choice.season && ids[item.ID] == "" {
 				all = false
 				break
 			}
@@ -145,7 +197,7 @@ func (s *terminalSeries) mark(choice terminalChoice) []string {
 			if all {
 				delete(ids, item.ID)
 			} else {
-				ids[item.ID] = true
+				queueEpisode(item)
 			}
 		}
 	}
@@ -153,15 +205,13 @@ func (s *terminalSeries) mark(choice terminalChoice) []string {
 }
 
 func (s *terminalSeries) arguments(process bool) []string {
-	if len(s.selected) == 0 {
-		return nil
-	}
-	keys := slices.SortedFunc(maps.Keys(s.selected), func(a, b seriesKey) int {
+	compare := func(a, b seriesKey) int {
 		if order := cmp.Compare(a.provider, b.provider); order != 0 {
 			return order
 		}
 		return cmp.Compare(a.id, b.id)
-	})
+	}
+	keys := slices.SortedFunc(maps.Keys(s.selected), compare)
 	args := []string{"series", "download"}
 	if process {
 		args = append(args, "--process")
@@ -169,6 +219,7 @@ func (s *terminalSeries) arguments(process bool) []string {
 	if s.redownload {
 		args = append(args, "--redownload")
 	}
+	flags := len(args)
 	for _, key := range keys {
 		if len(s.selected[key]) == 0 {
 			continue
@@ -176,7 +227,10 @@ func (s *terminalSeries) arguments(process bool) []string {
 		ids := slices.Sorted(maps.Keys(s.selected[key]))
 		args = append(args, "--select="+strings.Join([]string{key.provider, key.id, strings.Join(ids, ",")}, "|"))
 	}
-	if len(args) == 2 || !strings.HasPrefix(args[len(args)-1], "--select=") {
+	for _, key := range slices.SortedFunc(maps.Keys(s.movies), compare) {
+		args = append(args, "--movie="+key.provider+"|"+key.id)
+	}
+	if len(args) == flags {
 		return nil
 	}
 	return args
@@ -193,6 +247,12 @@ func (s *terminalSeries) browse(discovery seriesDiscovery) string {
 			return matchingSeries
 		}
 	}
+	for _, group := range discovery.movies {
+		if len(group.Movies) > 0 {
+			s.movieGroups = discovery.movies
+			return matchingMovies
+		}
+	}
 	return ""
 }
 
@@ -207,8 +267,8 @@ func terminalPrevious(page string) string {
 	switch page {
 	case matchingEpisodes:
 		return matchingSeries
-	case matchingSeries, downloadQueue:
-		return "Series"
+	case matchingSeries, matchingMovies, downloadQueue:
+		return "Downloads"
 	default:
 		return "Main"
 	}

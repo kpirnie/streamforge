@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,6 +31,24 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	var estimated uint64
 	unknownSize := false
 	var failures []error
+	add := func(provider string, episode xtream.Episode) {
+		path := downloadPath(provider, episode)
+		if paths[path] {
+			return
+		}
+		paths[path] = true
+		if len(grouped[provider]) == 0 {
+			providerOrder = append(providerOrder, provider)
+		}
+		if episode.SizeBytes == 0 {
+			unknownSize = true
+		} else if episode.SizeBytes > ^uint64(0)-estimated {
+			estimated = ^uint64(0)
+		} else {
+			estimated += episode.SizeBytes
+		}
+		grouped[provider] = append(grouped[provider], episode)
+	}
 	for _, pick := range command.selections {
 		_, episodes, rejected, err := p.Episodes(ctx, pick.provider, pick.argument)
 		invalid += rejected
@@ -42,34 +61,34 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 			wanted[id] = true
 		}
 		before := len(grouped[pick.provider])
-		if before == 0 && !slices.Contains(providerOrder, pick.provider) {
-			providerOrder = append(providerOrder, pick.provider)
-		}
 		for _, episode := range episodes {
 			if !pick.allEpisodes && !wanted[episode.ID] {
 				continue
 			}
 			delete(wanted, episode.ID)
-			path := downloadPath(pick.provider, episode)
-			if paths[path] {
-				continue
-			}
-			paths[path] = true
-			if episode.SizeBytes == 0 {
-				unknownSize = true
-			} else if episode.SizeBytes > ^uint64(0)-estimated {
-				estimated = ^uint64(0)
-			} else {
-				estimated += episode.SizeBytes
-			}
-			grouped[pick.provider] = append(grouped[pick.provider], episode)
+			add(pick.provider, episode)
 		}
 		if len(wanted) != 0 || len(grouped[pick.provider]) == before {
 			failures = append(failures, errors.New("some selected episodes were unavailable or duplicated"))
 		}
 	}
+	for _, provider := range slices.Sorted(maps.Keys(command.movies)) {
+		wanted := maps.Clone(command.movies[provider])
+		movies, err := p.Movies(ctx, provider, wanted)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("movie selection [%s]: %w", provider, err))
+			continue
+		}
+		for _, movie := range movies {
+			delete(wanted, movie.ID)
+			add(provider, movie)
+		}
+		if len(wanted) != 0 {
+			failures = append(failures, fmt.Errorf("%d selected movies unavailable from %s", len(wanted), provider))
+		}
+	}
 	if len(paths) == 0 {
-		return errors.Join(errors.New("no episodes available for download"), errors.Join(failures...))
+		return errors.Join(errors.New("no media available for download"), errors.Join(failures...))
 	}
 	root, err := os.OpenRoot(media.Working)
 	if err != nil {
@@ -95,7 +114,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 		return err
 	}
 	if dryRun {
-		report("Would consider %d episodes for download, %d invalid metadata entries", len(paths), invalid)
+		report("Would consider %d items for download, %d invalid metadata entries", len(paths), invalid)
 		return errors.Join(failures...)
 	}
 	ffprobe := value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe")
@@ -117,7 +136,12 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	transferEpisode := func(provider string, episode xtream.Episode, transfer func(context.Context, *os.File, func() error) error) {
 		path := downloadPath(provider, episode)
 		directory := filepath.Join(episode.SeriesName, fmt.Sprintf("Season %02d", episode.Season))
-		work, finish := progress.begin(ctx, fmt.Sprintf("%s · series %s · episode %s", provider, episode.SeriesID, episode.ID))
+		label := fmt.Sprintf("%s · series %s · episode %s", provider, episode.SeriesID, episode.ID)
+		if episode.Movie {
+			directory = filepath.Join("Movies", episode.Name)
+			label = fmt.Sprintf("%s · %s · movie %s", provider, episode.Name, episode.ID)
+		}
+		work, finish := progress.begin(ctx, label)
 		result := media.AtomicWrite(work, root, path, 0666, command.redownload, func(file *os.File) error {
 			return transfer(work, file, func() error {
 				_, err := media.Probe(work, ffprobe, file)
@@ -166,7 +190,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 		})
 	}
 	workers.Wait()
-	report("Downloaded %d episodes, %d skipped, %d failed, %d cancelled, %d companion failures", done, skipped, len(failures), cancelled, len(companionFailures))
+	report("Downloaded %d items, %d skipped, %d failed, %d cancelled, %d companion failures", done, skipped, len(failures), cancelled, len(companionFailures))
 	var processErr error
 	if command.process && len(completed) > 0 && ctx.Err() == nil {
 		processErr = runTranscode(ctx, nil, completed, titles, value, false, yes, report, progress)
@@ -176,5 +200,9 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 
 func downloadPath(provider string, episode xtream.Episode) string {
 	key := sha256.Sum256([]byte(provider))
-	return filepath.Join("input", fmt.Sprintf("provider-%x", key[:8]), episode.SeriesID, episode.Name+"."+episode.Extension)
+	directory := filepath.Join("input", fmt.Sprintf("provider-%x", key[:8]))
+	if episode.Movie {
+		return filepath.Join(directory, "movies", episode.ID, episode.Name+"."+episode.Extension)
+	}
+	return filepath.Join(directory, episode.SeriesID, episode.Name+"."+episode.Extension)
 }

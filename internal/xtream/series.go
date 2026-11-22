@@ -40,6 +40,7 @@ type SearchGroup struct {
 
 // Episode identifies a downloadable provider item and its legacy output name.
 type Episode struct {
+	Movie      bool
 	SizeBytes  uint64
 	SeriesID   string
 	ID         string
