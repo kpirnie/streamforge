@@ -1,18 +1,30 @@
 services:
   streamforge:
-    image: ghcr.io/kpirnie/streamforge:dev
+    image: "${STREAMFORGE_IMAGE:-ghcr.io/kpirnie/streamforge:dev}"
     user: "${PUID:-1000}:${PGID:-1000}"
+    # Set to keep-id for rootless Podman and run Compose with --in-pod=false.
+    userns_mode: "${STREAMFORGE_USERNS_MODE:-}"
     read_only: true
     stdin_open: true
     tty: true
     volumes:
-      - ./config:/config:ro
-      - ./working:/working:rw
-      # Optional for media commands. Use Linux binaries compatible with the image.
-      # - /host/bin/ffmpeg:/usr/local/bin/ffmpeg:ro
-      # - /host/bin/ffprobe:/usr/local/bin/ffprobe:ro
-    # Optional for Intel QSV or AMD VAAPI. Supply the matching driver and group too.
+      - "${STREAMFORGE_CONFIG_DIR:-./config}:/config:ro"
+      - "${STREAMFORGE_WORK_DIR:-./working}:/working:rw"
+      # Enable both mounts for downloads and transcoding.
+      # - "${FFMPEG_HOST_PATH:-/opt/media/bin/ffmpeg}:/usr/local/bin/ffmpeg:ro"
+      # - "${FFPROBE_HOST_PATH:-/opt/media/bin/ffprobe}:/usr/local/bin/ffprobe:ro"
+
+    # Optional. Application settings normally come from /config/.env.
+    # environment:
+    #   STREAMFORGE_PLAYBACK_PARENT: /library
+
+    # Optional. Intel QSV or AMD VAAPI device access. Supply compatible
+    # user-space drivers if the mounted FFmpeg build needs them.
     # devices:
-    #   - /dev/dri/renderD128:/dev/dri/renderD128
+    #   - "${RENDER_DEVICE:-/dev/dri/renderD128}:/dev/dri/renderD128"
     # group_add:
-    #   - "${RENDER_GID}"
+    #   - "${RENDER_GID:-109}"
+
+    # Optional. NVIDIA GPU access with Docker Compose and the NVIDIA
+    # Container Toolkit. Enable this instead of the DRI example above.
+    # gpus: all
