@@ -296,7 +296,6 @@ func runTerminal(ctx context.Context) error {
 	var choice terminalChoice
 	var arguments []string
 	var result string
-	var discovered seriesDiscovery
 	browser := terminalSeries{selected: make(map[seriesKey]map[string]string), movies: make(map[seriesKey]xtream.Movie)}
 	if len(terminalSettings(settings, values)) > 1 {
 		page = sessionSettings
@@ -359,6 +358,7 @@ func runTerminal(ctx context.Context) error {
 			}
 			switch {
 			case operation.Err() != nil:
+				discovery = seriesDiscovery{}
 				fmt.Fprintln(buffer, "Cancelled.")
 			case err != nil:
 				fmt.Fprintln(buffer, err)
@@ -466,9 +466,6 @@ func runTerminal(ctx context.Context) error {
 			scroll = min(scroll, max(0, len(lines)-slots))
 			frame = append(frame, lines[scroll:min(len(lines), scroll+slots)]...)
 			footer = "↑↓ Scroll   Enter Return   Ctrl+C Exit"
-			if len(discovered.groups) > 0 || len(discovered.movies) > 0 || len(discovered.episodes) > 0 {
-				footer = "B Browse   ↑↓ Scroll   Enter Return"
-			}
 			if mode == "startup" {
 				footer = "Enter Continue   Esc Quit"
 			}
@@ -487,17 +484,16 @@ func runTerminal(ctx context.Context) error {
 			if completion.clipboard != "" {
 				fmt.Fprintf(os.Stdout, "\x1b]52;c;%s\a", completion.clipboard)
 			}
-			discovered = completion.discovery
 			if completion.status != nil {
 				status = *completion.status
 			}
 			mode, scroll = "result", 0
-			if completion.preview && !completion.failed {
-				mode = "confirm"
-			} else if !completion.failed {
-				if destination := browser.browse(discovered, page); destination != "" {
-					navigate(destination)
+			if completion.preview {
+				if !completion.failed {
+					mode = "confirm"
 				}
+			} else if destination := browser.browse(completion.discovery, page); destination != "" {
+				navigate(destination)
 			}
 		case key, ok := <-keys:
 			if !ok {
@@ -626,10 +622,6 @@ func runTerminal(ctx context.Context) error {
 				}
 			case "result":
 				switch key {
-				case "text:b", "text:B":
-					if destination := browser.browse(discovered, page); destination != "" {
-						navigate(destination)
-					}
 				case "enter":
 					mode = "menu"
 				case "down":
