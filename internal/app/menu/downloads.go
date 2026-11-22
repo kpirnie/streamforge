@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Kevin Pirnie <iam@kevinpirnie.com>
 // Licensed under the MIT License. See LICENSE file in the project root for full license text.
 
-package main
+package menu
 
 import (
 	"cmp"
@@ -22,42 +22,58 @@ const (
 	matchingSeries   = "Series search results"
 	matchingMovies   = "Movie search results"
 	matchingEpisodes = "Series episodes"
-	downloadQueue    = "Download queue"
+	// DownloadQueue is the page for reviewing and running queued downloads.
+	DownloadQueue = "Download queue"
 )
 
 type seriesKey struct{ provider, id string }
 
-type terminalSeries struct {
-	groups      []xtream.SearchGroup
-	movieGroups []xtream.MovieGroup
-	provider    string
-	episodeFrom string
-	listing     seriesDiscovery
-	selected    map[seriesKey]map[string]string
-	movies      map[seriesKey]xtream.Movie
-	redownload  bool
+// Browser tracks provider navigation and queued movies and episodes.
+type Browser struct {
+	downloadPath func(string, xtream.Episode) string
+	groups       []xtream.SearchGroup
+	movieGroups  []xtream.MovieGroup
+	provider     string
+	episodeFrom  string
+	listing      Discovery
+	selected     map[seriesKey]map[string]string
+	movies       map[seriesKey]xtream.Movie
+	redownload   bool
 }
 
-func (s *terminalSeries) choices(page string) []terminalChoice {
+// Choices returns the entries and navigation actions for a page.
+func (s *Browser) Choices(page string) []Choice {
+	choices := s.choices(page)
+	if page == "Main" || page == SessionSettings {
+		return choices
+	}
+	return append(slices.Clone(choices),
+		Choice{Label: "Back to Previous", Page: s.Previous(page)},
+		Choice{Label: "Back to Main", Page: "Main"},
+		Choice{Label: "Exit"},
+	)
+}
+
+func (s *Browser) choices(page string) []Choice {
 	switch page {
 	case seriesProviders:
-		var choices []terminalChoice
+		var choices []Choice
 		for _, group := range s.groups {
 			if len(group.Series) > 0 {
 				choices = append(choices, providerChoice(group.Provider, len(group.Series), matchingSeries))
 			}
 		}
-		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
+		return append(choices, Choice{Label: "Download queue", Page: DownloadQueue})
 	case movieProviders:
-		var choices []terminalChoice
+		var choices []Choice
 		for _, group := range s.movieGroups {
 			if len(group.Movies) > 0 {
 				choices = append(choices, providerChoice(group.Provider, len(group.Movies), matchingMovies))
 			}
 		}
-		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
+		return append(choices, Choice{Label: "Download queue", Page: DownloadQueue})
 	case matchingMovies:
-		var choices []terminalChoice
+		var choices []Choice
 		for _, group := range s.movieGroups {
 			if group.Provider != s.provider {
 				continue
@@ -68,12 +84,12 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 				if _, queued := s.movies[key]; queued {
 					marker = "[x] "
 				}
-				choices = append(choices, terminalChoice{label: marker + movieLabel(movie), mark: "movie", key: key, movie: movie})
+				choices = append(choices, Choice{Label: marker + MovieLabel(movie), Mark: "movie", key: key, movie: movie})
 			}
 		}
-		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
+		return append(choices, Choice{Label: "Download queue", Page: DownloadQueue})
 	case matchingSeries:
-		var choices []terminalChoice
+		var choices []Choice
 		for _, group := range s.groups {
 			if group.Provider != s.provider {
 				continue
@@ -86,30 +102,30 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 				if item.Seasons > 0 {
 					label += fmt.Sprintf(" · %d seasons", item.Seasons)
 				}
-				choices = append(choices, terminalChoice{label: label, args: []string{"series", "episodes", "--provider=" + group.Provider, item.ID}})
+				choices = append(choices, Choice{Label: label, Args: []string{"series", "episodes", "--provider=" + group.Provider, item.ID}})
 			}
 		}
-		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
+		return append(choices, Choice{Label: "Download queue", Page: DownloadQueue})
 	case matchingEpisodes:
-		choices := []terminalChoice{
-			{label: "Add All Episodes to Download Queue", mark: "all"},
-			{label: "Deselect All Episodes", mark: "none"},
-			{label: "Download queue", page: downloadQueue},
+		choices := []Choice{
+			{Label: "Add All Episodes to Download Queue", Mark: "all"},
+			{Label: "Deselect All Episodes", Mark: "none"},
+			{Label: "Download queue", Page: DownloadQueue},
 		}
-		key := seriesKey{s.listing.provider, s.listing.seriesID}
+		key := seriesKey{s.listing.Provider, s.listing.SeriesID}
 		lastSeason := -1
 		root, err := os.OpenRoot(media.Working)
 		if err == nil {
 			defer root.Close()
 		}
-		for _, episode := range s.listing.episodes {
+		for _, episode := range s.listing.Episodes {
 			if episode.Season != lastSeason {
-				choices = append(choices, terminalChoice{label: fmt.Sprintf("Toggle all in Season %d", episode.Season), mark: "season", season: episode.Season})
+				choices = append(choices, Choice{Label: fmt.Sprintf("Toggle all in Season %d", episode.Season), Mark: "season", season: episode.Season})
 				lastSeason = episode.Season
 			}
 			label := fmt.Sprintf("S%02dE%02d · %s", episode.Season, episode.Number, episode.ID)
 			if root != nil {
-				if info, err := root.Lstat(downloadPath(key.provider, episode)); err == nil && info.Mode().IsRegular() {
+				if info, err := root.Lstat(s.downloadPath(key.provider, episode)); err == nil && info.Mode().IsRegular() {
 					label += " · downloaded"
 				}
 			}
@@ -118,10 +134,10 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 			} else {
 				label = "[ ] " + label
 			}
-			choices = append(choices, terminalChoice{label: label, mark: "episode", episode: episode.ID})
+			choices = append(choices, Choice{Label: label, Mark: "episode", episode: episode.ID})
 		}
 		return choices
-	case downloadQueue:
+	case DownloadQueue:
 		selected := len(s.movies)
 		for _, ids := range s.selected {
 			selected += len(ids)
@@ -130,44 +146,45 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 		if s.redownload {
 			state = "on"
 		}
-		choices := []terminalChoice{
-			{label: fmt.Sprintf("Download Only (%d selected)", selected), mark: "download", confirm: true},
-			{label: fmt.Sprintf("Download and Process (%d selected)", selected), mark: "process", confirm: true},
-			{label: "Replace existing downloads (" + state + ")", mark: "replace"},
-			{label: "Clear selections", mark: "clear"},
+		choices := []Choice{
+			{Label: fmt.Sprintf("Download Only (%d selected)", selected), Mark: "download", Confirm: true},
+			{Label: fmt.Sprintf("Download and Process (%d selected)", selected), Mark: "process", Confirm: true},
+			{Label: "Replace existing downloads (" + state + ")", Mark: "replace"},
+			{Label: "Clear selections", Mark: "clear"},
 		}
-		var queued []terminalChoice
+		var queued []Choice
 		for key, movie := range s.movies {
-			label := fmt.Sprintf("Remove %s [%s · %s]", movieLabel(movie), key.provider, key.id)
-			queued = append(queued, terminalChoice{label: label, mark: "remove-movie", key: key})
+			label := fmt.Sprintf("Remove %s [%s · %s]", MovieLabel(movie), key.provider, key.id)
+			queued = append(queued, Choice{Label: label, Mark: "remove-movie", key: key})
 		}
 		for key, ids := range s.selected {
 			for id, title := range ids {
 				label := fmt.Sprintf("Remove %s [%s · %s/%s]", title, key.provider, key.id, id)
-				queued = append(queued, terminalChoice{label: label, mark: "remove-episode", key: key, episode: id})
+				queued = append(queued, Choice{Label: label, Mark: "remove-episode", key: key, episode: id})
 			}
 		}
-		slices.SortFunc(queued, func(a, b terminalChoice) int {
-			return cmp.Compare(a.label, b.label)
+		slices.SortFunc(queued, func(a, b Choice) int {
+			return cmp.Compare(a.Label, b.Label)
 		})
 		return append(choices, queued...)
 	default:
-		return terminalMenus[page]
+		return static[page]
 	}
 }
 
-func providerChoice(provider string, count int, page string) terminalChoice {
+func providerChoice(provider string, count int, page string) Choice {
 	label := fmt.Sprintf("%s (%d matches)", provider, count)
 	if count == 1 {
 		label = provider + " (1 match)"
 	}
-	return terminalChoice{label: label, page: page, provider: provider}
+	return Choice{Label: label, Page: page, provider: provider}
 }
 
-func (s *terminalSeries) mark(choice terminalChoice) []string {
-	switch choice.mark {
+// Mark applies a queue action and returns command arguments if it starts a batch.
+func (s *Browser) Mark(choice Choice) []string {
+	switch choice.Mark {
 	case "download", "process":
-		return s.arguments(choice.mark == "process")
+		return s.arguments(choice.Mark == "process")
 	case "replace":
 		s.redownload = !s.redownload
 		return nil
@@ -189,18 +206,18 @@ func (s *terminalSeries) mark(choice terminalChoice) []string {
 		delete(s.selected[choice.key], choice.episode)
 		return nil
 	}
-	key := seriesKey{s.listing.provider, s.listing.seriesID}
+	key := seriesKey{s.listing.Provider, s.listing.SeriesID}
 	ids := s.selected[key]
 	if ids == nil {
 		ids = make(map[string]string)
 		s.selected[key] = ids
 	}
 	queueEpisode := func(item xtream.Episode) {
-		ids[item.ID] = fmt.Sprintf("%s · S%02dE%02d", s.listing.title, item.Season, item.Number)
+		ids[item.ID] = fmt.Sprintf("%s · S%02dE%02d", s.listing.Title, item.Season, item.Number)
 	}
-	switch choice.mark {
+	switch choice.Mark {
 	case "all":
-		for _, item := range s.listing.episodes {
+		for _, item := range s.listing.Episodes {
 			queueEpisode(item)
 		}
 	case "none":
@@ -209,7 +226,7 @@ func (s *terminalSeries) mark(choice terminalChoice) []string {
 		if ids[choice.episode] != "" {
 			delete(ids, choice.episode)
 		} else {
-			for _, item := range s.listing.episodes {
+			for _, item := range s.listing.Episodes {
 				if item.ID == choice.episode {
 					queueEpisode(item)
 					break
@@ -218,13 +235,13 @@ func (s *terminalSeries) mark(choice terminalChoice) []string {
 		}
 	case "season":
 		all := true
-		for _, item := range s.listing.episodes {
+		for _, item := range s.listing.Episodes {
 			if item.Season == choice.season && ids[item.ID] == "" {
 				all = false
 				break
 			}
 		}
-		for _, item := range s.listing.episodes {
+		for _, item := range s.listing.Episodes {
 			if item.Season != choice.season {
 				continue
 			}
@@ -238,7 +255,7 @@ func (s *terminalSeries) mark(choice terminalChoice) []string {
 	return nil
 }
 
-func (s *terminalSeries) arguments(process bool) []string {
+func (s *Browser) arguments(process bool) []string {
 	compare := func(a, b seriesKey) int {
 		if order := cmp.Compare(a.provider, b.provider); order != 0 {
 			return order
@@ -270,30 +287,32 @@ func (s *terminalSeries) arguments(process bool) []string {
 	return args
 }
 
-func (s *terminalSeries) browse(discovery seriesDiscovery, from string) string {
-	if len(discovery.episodes) != 0 {
+// Browse stores the latest results and returns the page that displays them.
+func (s *Browser) Browse(discovery Discovery, from string) string {
+	if len(discovery.Episodes) != 0 {
 		s.listing = discovery
 		s.episodeFrom = from
 		return matchingEpisodes
 	}
-	for _, group := range discovery.groups {
+	for _, group := range discovery.Groups {
 		if len(group.Series) > 0 {
-			s.groups = discovery.groups
+			s.groups = discovery.Groups
 			return seriesProviders
 		}
 	}
-	for _, group := range discovery.movies {
+	for _, group := range discovery.Movies {
 		if len(group.Movies) > 0 {
-			s.movieGroups = discovery.movies
+			s.movieGroups = discovery.Movies
 			return movieProviders
 		}
 	}
 	return ""
 }
 
-func (s *terminalSeries) heading(page string) string {
+// Heading returns the title displayed above a page.
+func (s *Browser) Heading(page string) string {
 	if page == matchingEpisodes {
-		return s.listing.title + " [" + s.listing.provider + "]"
+		return s.listing.Title + " [" + s.listing.Provider + "]"
 	}
 	if page == matchingSeries || page == matchingMovies {
 		return page + " [" + s.provider + "]"
@@ -301,7 +320,8 @@ func (s *terminalSeries) heading(page string) string {
 	return page
 }
 
-func (s *terminalSeries) previous(page string) string {
+// Previous returns the parent page for back navigation.
+func (s *Browser) Previous(page string) string {
 	switch page {
 	case matchingEpisodes:
 		return s.episodeFrom
@@ -309,9 +329,25 @@ func (s *terminalSeries) previous(page string) string {
 		return seriesProviders
 	case matchingMovies:
 		return movieProviders
-	case seriesProviders, movieProviders, downloadQueue:
+	case seriesProviders, movieProviders, DownloadQueue:
 		return "Downloads"
 	default:
 		return "Main"
+	}
+}
+
+// NewBrowser creates the state for browsing and queueing downloads.
+func NewBrowser(downloadPath func(string, xtream.Episode) string) *Browser {
+	return &Browser{
+		downloadPath: downloadPath,
+		selected:     make(map[seriesKey]map[string]string),
+		movies:       make(map[seriesKey]xtream.Movie),
+	}
+}
+
+// Open records the provider selected for a results page.
+func (s *Browser) Open(choice Choice) {
+	if choice.provider != "" {
+		s.provider = choice.provider
 	}
 }

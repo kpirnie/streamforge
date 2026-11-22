@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Kevin Pirnie <iam@kevinpirnie.com>
 // Licensed under the MIT License. See LICENSE file in the project root for full license text.
 
-package main
+package app
 
 import (
 	"fmt"
@@ -56,4 +56,17 @@ func unknownSettings(env map[string]string) []string {
 		}
 	}
 	return warnings
+}
+
+func sessionValue(key, fallback string, env, session map[string]string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	if v, ok := env[key]; ok {
+		return v
+	}
+	if v, ok := session[key]; ok {
+		return v
+	}
+	return fallback
 }

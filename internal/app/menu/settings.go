@@ -2,14 +2,15 @@
 // Copyright (c) 2026 Kevin Pirnie <iam@kevinpirnie.com>
 // Licensed under the MIT License. See LICENSE file in the project root for full license text.
 
-package main
+package menu
 
 import (
 	"os"
 	"strings"
 )
 
-const sessionSettings = "Session Settings"
+// SessionSettings is the startup page for session-specific configuration.
+const SessionSettings = "Session Settings"
 
 type terminalSetting struct {
 	key, label, prompt string
@@ -32,8 +33,9 @@ var availableSettings = []terminalSetting{
 	{"EMBY_API_KEY", "Emby API key", "Emby API key", true},
 }
 
-func terminalSettings(env, session map[string]string) []terminalChoice {
-	choices := []terminalChoice{{label: "Continue with Defaults", mark: "accept-settings"}}
+// Settings lists the settings available for the current session.
+func Settings(env, session map[string]string) []Choice {
+	choices := []Choice{{Label: "Continue with Defaults", Mark: "accept-settings"}}
 	for _, setting := range availableSettings {
 		if _, ok := os.LookupEnv(setting.key); ok {
 			continue
@@ -45,25 +47,13 @@ func terminalSettings(env, session map[string]string) []terminalChoice {
 		if session[setting.key] != "" {
 			label += " (set)"
 		}
-		choices = append(choices, terminalChoice{label: label, prompt: setting.prompt, setting: setting.key, secret: setting.secret})
+		choices = append(choices, Choice{Label: label, Prompt: setting.prompt, Setting: setting.key, Secret: setting.secret})
 	}
 	return choices
 }
 
-func sessionValue(key, fallback string, env, session map[string]string) string {
-	if v, ok := os.LookupEnv(key); ok {
-		return v
-	}
-	if v, ok := env[key]; ok {
-		return v
-	}
-	if v, ok := session[key]; ok {
-		return v
-	}
-	return fallback
-}
-
-func checkTerminalSetting(key, value string) bool {
+// ValidSetting reports whether the menu accepts the entered value.
+func ValidSetting(key, value string) bool {
 	switch key {
 	case "STREAMFORGE_PLAYBACK_PARENT":
 		return strings.HasPrefix(value, "/")

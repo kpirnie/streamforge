@@ -2,13 +2,12 @@
 // Copyright (c) 2026 Kevin Pirnie <iam@kevinpirnie.com>
 // Licensed under the MIT License. See LICENSE file in the project root for full license text.
 
-package main
+package app
 
 import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -22,69 +21,10 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/kpirnie/streamforge/internal/app/menu"
 	"github.com/kpirnie/streamforge/internal/media"
 	"github.com/kpirnie/streamforge/internal/xtream"
 )
-
-type terminalChoice struct {
-	label    string
-	args     []string
-	page     string
-	prompt   string
-	confirm  bool
-	mark     string
-	season   int
-	episode  string
-	provider string
-	key      seriesKey
-	movie    xtream.Movie
-	setting  string
-	secret   bool
-}
-
-var terminalMenus = map[string][]terminalChoice{
-	"Main": {
-		{label: "Dispatcharr", page: "Dispatcharr"},
-		{label: "Emby", page: "Emby"},
-		{label: "Downloads", page: "Downloads"},
-		{label: "Transcode media", args: []string{"movies", "transcode"}, prompt: "Media path", confirm: true},
-		{label: "Generate .strm companions", args: []string{"strm"}, prompt: "Media path", confirm: true},
-		{label: "System Status", page: "System Status"},
-		{label: "Exit"},
-	},
-	"Dispatcharr": {
-		{label: "Refresh", args: []string{"dispatcharr", "refresh"}, confirm: true},
-		{label: "Create/Update", args: []string{"dispatcharr", "create-update"}, confirm: true},
-		{label: "Prune", args: []string{"dispatcharr", "prune"}, confirm: true},
-		{label: "Match", args: []string{"dispatcharr", "match"}, confirm: true},
-		{label: "Renumber", args: []string{"dispatcharr", "renumber"}, confirm: true},
-		{label: "Reorder", args: []string{"dispatcharr", "reorder"}, confirm: true},
-		{label: "Clear EPG Mappings", args: []string{"dispatcharr", "clear-epg"}, confirm: true},
-		{label: "Export", args: []string{"dispatcharr", "export"}},
-		{label: "All", args: []string{"dispatcharr", "all"}, confirm: true},
-	},
-	"Emby": {
-		{label: "Refresh Guide", args: []string{"emby", "refresh"}, confirm: true},
-		{label: "Logos", args: []string{"emby", "logos"}, confirm: true},
-		{label: "Numbers", args: []string{"emby", "numbers"}, confirm: true},
-		{label: "All", args: []string{"emby", "all"}, confirm: true},
-	},
-	"Downloads": {
-		{label: "Search series", args: []string{"series", "search"}, prompt: "Title"},
-		{label: "Search movies", args: []string{"movies", "search"}, prompt: "Title"},
-		{label: "Download queue", page: downloadQueue},
-		{label: "List episodes", args: []string{"series", "episodes"}, prompt: "Provider name | Series ID"},
-		{label: "Download series", args: []string{"series", "download"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
-		{label: "Download and process series", args: []string{"series", "download", "--process"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
-		{label: "Transcode media", args: []string{"movies", "transcode"}, prompt: "Media path", confirm: true},
-	},
-	"System Status": {
-		{label: "Show status", args: []string{"diagnostics"}},
-		{label: "Retry Connections", args: []string{"diagnostics"}, page: ""},
-		{label: "Save diagnostics", args: []string{"diagnostics", "--save"}},
-		{label: "Copy Diagnostics", args: []string{"diagnostics"}},
-	},
-}
 
 func terminalAvailable(file *os.File) bool {
 	var settings syscall.Termios
@@ -166,42 +106,6 @@ func terminalInput(ctx context.Context, fd int) <-chan string {
 		}
 	}()
 	return keys
-}
-
-func terminalArgs(choice terminalChoice, input string) ([]string, error) {
-	args := slices.Clone(choice.args)
-	if choice.prompt == "" {
-		return args, nil
-	}
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return nil, errors.New("an input value is required")
-	}
-	if len(args) < 2 || args[0] != "series" || (args[1] != "episodes" && args[1] != "download") {
-		return append(args, input), nil
-	}
-	values := strings.Split(input, "|")
-	for i := range values {
-		values[i] = strings.TrimSpace(values[i])
-	}
-	size := 2
-	if args[1] == "download" {
-		size = 3
-	}
-	if len(values) != size || values[0] == "" || values[1] == "" {
-		return nil, errors.New("enter the requested values separated by |")
-	}
-	args = append(args, "--provider="+values[0], values[1])
-	if size == 3 {
-		if strings.EqualFold(values[2], "all") {
-			args = append(args, "--all-episodes")
-		} else {
-			for _, id := range strings.Split(values[2], ",") {
-				args = append(args, "--episode="+strings.TrimSpace(id))
-			}
-		}
-	}
-	return args, nil
 }
 
 type terminalBuffer struct {
@@ -293,17 +197,17 @@ func runTerminal(ctx context.Context) error {
 	defer redraw.Stop()
 	page, mode, filter, input := "Main", "menu", "", ""
 	selection, scroll := 0, 0
-	var choice terminalChoice
+	var choice menu.Choice
 	var arguments []string
 	var result string
-	browser := terminalSeries{selected: make(map[seriesKey]map[string]string), movies: make(map[seriesKey]xtream.Movie)}
-	if len(terminalSettings(settings, values)) > 1 {
-		page = sessionSettings
+	browser := menu.NewBrowser(downloadPath)
+	if len(menu.Settings(settings, values)) > 1 {
+		page = menu.SessionSettings
 	}
 	var cancelOperation context.CancelFunc
 	type operationResult struct {
 		clipboard string
-		discovery seriesDiscovery
+		discovery menu.Discovery
 		text      string
 		status    *statusReport
 		preview   bool
@@ -334,8 +238,8 @@ func runTerminal(ctx context.Context) error {
 		if preview {
 			args = append(args, "--dry-run")
 		}
-		retry := choice.label == "Retry Connections"
-		copyReport := choice.label == "Copy Diagnostics"
+		retry := choice.Label == "Retry Connections"
+		copyReport := choice.Label == "Copy Diagnostics"
 		clipboard := copyReport && supportsClipboard()
 		if copyReport && !clipboard {
 			args = append(args, "--save")
@@ -348,7 +252,7 @@ func runTerminal(ctx context.Context) error {
 				result := diagnosticStatus(operation, session, currentValues)
 				refreshed = &result
 			}
-			var discovery seriesDiscovery
+			var discovery menu.Discovery
 			err := runCommand(operation, args, session, buffer, buffer, &discovery, currentProgress, currentValues, providerCache)
 			var copied string
 			if clipboard && err == nil {
@@ -358,7 +262,7 @@ func runTerminal(ctx context.Context) error {
 			}
 			switch {
 			case operation.Err() != nil:
-				discovery = seriesDiscovery{}
+				discovery = menu.Discovery{}
 				fmt.Fprintln(buffer, "Cancelled.")
 			case err != nil:
 				fmt.Fprintln(buffer, err)
@@ -369,28 +273,25 @@ func runTerminal(ctx context.Context) error {
 		}()
 	}
 	for {
-		menu := browser.choices(page)
-		if page == sessionSettings {
-			menu = terminalSettings(settings, values)
+		choices := browser.Choices(page)
+		if page == menu.SessionSettings {
+			choices = menu.Settings(settings, values)
 		}
-		if page != "Main" && page != sessionSettings {
-			menu = append(slices.Clone(menu), terminalChoice{label: "Back to Previous", page: browser.previous(page)}, terminalChoice{label: "Back to Main", page: "Main"}, terminalChoice{label: "Exit"})
-		}
-		available := make([]terminalChoice, 0, len(menu))
-		for _, item := range menu {
-			if providerErr != nil && page == "Downloads" && (item.page == downloadQueue || (len(item.args) > 1 && item.args[1] != "transcode")) {
-				item.label += " (disabled)"
-				item.args = []string{"diagnostics"}
-				item.prompt = ""
-				item.page = ""
-				item.confirm = false
+		available := make([]menu.Choice, 0, len(choices))
+		for _, item := range choices {
+			if providerErr != nil && page == "Downloads" && (item.Page == menu.DownloadQueue || (len(item.Args) > 1 && item.Args[1] != "transcode")) {
+				item.Label += " (disabled)"
+				item.Args = []string{"diagnostics"}
+				item.Prompt = ""
+				item.Page = ""
+				item.Confirm = false
 			}
-			if state, ok := status.Services[item.label]; ok && state != "connected" {
-				item.label += " (disabled)"
-				item.page = ""
-				item.args = []string{"diagnostics"}
+			if state, ok := status.Services[item.Label]; ok && state != "connected" {
+				item.Label += " (disabled)"
+				item.Page = ""
+				item.Args = []string{"diagnostics"}
 			}
-			if strings.Contains(strings.ToLower(item.label), strings.ToLower(filter)) {
+			if strings.Contains(strings.ToLower(item.Label), strings.ToLower(filter)) {
 				available = append(available, item)
 			}
 		}
@@ -398,7 +299,7 @@ func runTerminal(ctx context.Context) error {
 			selection = max(0, len(available)-1)
 		}
 		width, height := terminalDimensions()
-		frame := []string{fmt.Sprintf("Stream Forge  |  %s  |  %s", status.Runtime, status.Encoder), fmt.Sprintf("Emby %s  |  Dispatcharr %s", strings.Fields(status.Services["Emby"])[0], strings.Fields(status.Services["Dispatcharr"])[0]), browser.heading(page), ""}
+		frame := []string{fmt.Sprintf("Stream Forge  |  %s  |  %s", status.Runtime, status.Encoder), fmt.Sprintf("Emby %s  |  Dispatcharr %s", strings.Fields(status.Services["Emby"])[0], strings.Fields(status.Services["Dispatcharr"])[0]), browser.Heading(page), ""}
 		footer := "↑↓ Navigate   Enter Select   Esc Back   Ctrl+C Exit"
 		var activeDownloads []string
 		switch mode {
@@ -413,24 +314,24 @@ func runTerminal(ctx context.Context) error {
 				if first+i == selection {
 					marker = "› "
 				}
-				frame = append(frame, marker+item.label)
+				frame = append(frame, marker+item.Label)
 			}
 		case "input":
 			shown := input
-			if choice.secret {
+			if choice.Secret {
 				shown = strings.Repeat("•", utf8.RuneCountInString(input))
 			}
-			frame = append(frame, choice.label, "", choice.prompt, shown)
+			frame = append(frame, choice.Label, "", choice.Prompt, shown)
 			footer = "Enter Continue   Esc Back   Ctrl+C Exit"
 		case "confirm":
-			frame = append(frame, "Apply "+choice.label+"?", "No (Enter)   Yes (Y)", "")
+			frame = append(frame, "Apply "+choice.Label+"?", "No (Enter)   Yes (Y)", "")
 			lines := strings.Split(strings.TrimSpace(result), "\n")
 			slots := max(1, height-len(frame)-1)
 			scroll = min(scroll, max(0, len(lines)-slots))
 			frame = append(frame, lines[scroll:min(len(lines), scroll+slots)]...)
 			footer = "Y Confirm   Enter / Esc Cancel   Ctrl+C Exit"
 		case "running":
-			frame = append(frame, choice.label, "", fmt.Sprintf("Running for %s", time.Since(started).Truncate(time.Second)))
+			frame = append(frame, choice.Label, "", fmt.Sprintf("Running for %s", time.Since(started).Truncate(time.Second)))
 			footer = "Esc Cancel operation   Ctrl+C Exit"
 			state := progress.snapshot()
 			if state.total > 0 {
@@ -492,7 +393,7 @@ func runTerminal(ctx context.Context) error {
 				if !completion.failed {
 					mode = "confirm"
 				}
-			} else if destination := browser.browse(completion.discovery, page); destination != "" {
+			} else if destination := browser.Browse(completion.discovery, page); destination != "" {
 				navigate(destination)
 			}
 		case key, ok := <-keys:
@@ -516,8 +417,8 @@ func runTerminal(ctx context.Context) error {
 				case key == "escape":
 					if filter != "" {
 						filter, selection = "", 0
-					} else if page != "Main" && page != sessionSettings {
-						navigate(browser.previous(page))
+					} else if page != "Main" && page != menu.SessionSettings {
+						navigate(browser.Previous(page))
 					}
 				case key == "up":
 					selection = max(0, selection-1)
@@ -530,32 +431,30 @@ func runTerminal(ctx context.Context) error {
 				case key == "enter" && len(available) > 0:
 					choice = available[selection]
 					switch {
-					case choice.mark == "accept-settings":
+					case choice.Mark == "accept-settings":
 						navigate("Main")
 						if len(values) > 0 {
-							choice = terminalChoice{label: "Retry Connections"}
+							choice = menu.Choice{Label: "Retry Connections"}
 							arguments = []string{"diagnostics"}
 							launch(false)
 						}
-					case choice.mark != "":
-						arguments = browser.mark(choice)
+					case choice.Mark != "":
+						arguments = browser.Mark(choice)
 						if len(arguments) != 0 {
 							launch(true)
 						}
-					case choice.page != "":
-						if choice.provider != "" {
-							browser.provider = choice.provider
-						}
-						navigate(choice.page)
-					case choice.setting != "":
+					case choice.Page != "":
+						browser.Open(choice)
+						navigate(choice.Page)
+					case choice.Setting != "":
 						mode, input = "input", ""
-					case choice.args == nil:
+					case choice.Args == nil:
 						return nil
-					case choice.prompt != "":
+					case choice.Prompt != "":
 						mode, input = "input", ""
 					default:
-						arguments = slices.Clone(choice.args)
-						if choice.confirm && startupValue("STREAMFORGE_CONFIRM", "true") != "false" {
+						arguments = slices.Clone(choice.Args)
+						if choice.Confirm && startupValue("STREAMFORGE_CONFIRM", "true") != "false" {
 							launch(true)
 						} else {
 							launch(false)
@@ -572,13 +471,13 @@ func runTerminal(ctx context.Context) error {
 					input += strings.TrimPrefix(key, "text:")
 				case key == "enter":
 					var err error
-					if choice.setting != "" {
+					if choice.Setting != "" {
 						value := strings.TrimSpace(input)
-						if choice.secret {
+						if choice.Secret {
 							value = input
 						}
-						if checkTerminalSetting(choice.setting, value) {
-							values[choice.setting] = value
+						if menu.ValidSetting(choice.Setting, value) {
+							values[choice.Setting] = value
 							input = ""
 							mode = "menu"
 						} else {
@@ -586,10 +485,10 @@ func runTerminal(ctx context.Context) error {
 						}
 						break
 					}
-					arguments, err = terminalArgs(choice, input)
+					arguments, err = menu.Arguments(choice, input)
 					if err != nil {
 						mode, result, scroll = "result", err.Error(), 0
-					} else if choice.confirm && startupValue("STREAMFORGE_CONFIRM", "true") != "false" {
+					} else if choice.Confirm && startupValue("STREAMFORGE_CONFIRM", "true") != "false" {
 						launch(true)
 					} else {
 						launch(false)

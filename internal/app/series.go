@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Kevin Pirnie <iam@kevinpirnie.com>
 // Licensed under the MIT License. See LICENSE file in the project root for full license text.
 
-package main
+package app
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/kpirnie/streamforge/internal/app/menu"
 	"github.com/kpirnie/streamforge/internal/media"
 	"github.com/kpirnie/streamforge/internal/xtream"
 )
@@ -20,15 +21,6 @@ type cachedProviders struct {
 	providers *xtream.Providers
 	err       error
 }
-type seriesDiscovery struct {
-	movies   []xtream.MovieGroup
-	groups   []xtream.SearchGroup
-	episodes []xtream.Episode
-	provider string
-	title    string
-	seriesID string
-}
-
 type seriesSelection struct {
 	provider    string
 	argument    string
@@ -152,13 +144,13 @@ func parseSelection(raw string) (seriesSelection, error) {
 	return selection, nil
 }
 
-func runMovieSearch(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any), discovery *seriesDiscovery) error {
+func runMovieSearch(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any), discovery *menu.Discovery) error {
 	groups, err := providers.SearchMovies(ctx, command.argument, command.provider)
 	if err != nil {
 		return err
 	}
 	if discovery != nil {
-		discovery.movies = groups
+		discovery.Movies = groups
 	}
 	failed := 0
 	for _, group := range groups {
@@ -169,7 +161,7 @@ func runMovieSearch(ctx context.Context, providers *xtream.Providers, command se
 		}
 		fmt.Fprintln(out, group.Provider)
 		for _, movie := range group.Movies {
-			fmt.Fprintf(out, "  %s\t%s\n", movie.ID, movieLabel(movie))
+			fmt.Fprintf(out, "  %s\t%s\n", movie.ID, menu.MovieLabel(movie))
 		}
 		if len(group.Movies) == 0 {
 			fmt.Fprintln(out, "  No matches")
@@ -181,25 +173,14 @@ func runMovieSearch(ctx context.Context, providers *xtream.Providers, command se
 	return nil
 }
 
-func movieLabel(movie xtream.Movie) string {
-	title := movie.Title
-	if movie.Year != "" && !strings.Contains(title, "("+movie.Year+")") {
-		title += " (" + movie.Year + ")"
-	}
-	if movie.Quality != "" && !strings.Contains(strings.ToLower(title), strings.ToLower(movie.Quality)) {
-		title += " · " + movie.Quality
-	}
-	return title + " · " + strings.ToUpper(movie.Extension)
-}
-
-func runSeries(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any), discovery *seriesDiscovery) error {
+func runSeries(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any), discovery *menu.Discovery) error {
 	if command.action == "episodes" {
 		title, episodes, skipped, err := providers.Episodes(ctx, command.provider, command.argument)
 		if err != nil {
 			return err
 		}
 		if discovery != nil {
-			*discovery = seriesDiscovery{episodes: episodes, provider: command.provider, title: title, seriesID: command.argument}
+			*discovery = menu.Discovery{Episodes: episodes, Provider: command.provider, Title: title, SeriesID: command.argument}
 		}
 		fmt.Fprintf(out, "%s [%s]\n", title, command.provider)
 		for _, episode := range episodes {
@@ -218,7 +199,7 @@ func runSeries(ctx context.Context, providers *xtream.Providers, command seriesC
 		return err
 	}
 	if discovery != nil {
-		discovery.groups = groups
+		discovery.Groups = groups
 	}
 	failed := 0
 	for _, group := range groups {
