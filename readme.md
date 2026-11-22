@@ -13,6 +13,9 @@ Set `DISP_URL`, `DISP_USER` and `DISP_PASS` in the process environment or in a r
 | --- | --- |
 | `dispatcharr export` | Write all channels and TVG IDs to `/working/channels.csv`. |
 | `dispatcharr refresh` | Request asynchronous M3U source refresh. |
+| `dispatcharr create-update` | Synchronize channels with streams grouped by normalized name. |
+| `dispatcharr prune` | Remove stale source streams and channels and groups emptied by the removal. |
+| `dispatcharr all` | Request refresh, then run create/update, prune, match, renumber, and reorder. |
 | `dispatcharr match` | Synchronize channel TVG IDs with their mapped EPG records. |
 | `dispatcharr clear-epg` | Clear channel EPG mappings. |
 | `dispatcharr renumber` | Number nonempty channels in alphabetical order. |
@@ -20,10 +23,13 @@ Set `DISP_URL`, `DISP_USER` and `DISP_PASS` in the process environment or in a r
 
 Use `--dry-run` to preview an action and `--yes` to authorize changes. Use `--verbose` for debug logs. Export overwrites its CSV automatically.
 
+Dispatcharr queues the refresh asynchronously. The later steps of `all` use the data available when they run. A dry run previews each step against the current data.
+
 | Optional environment variable | Default |
 | --- | --- |
 | `STREAMFORGE_TIMEOUT` | `30s` |
 | `STREAMFORGE_START_CHANNEL` | `1` |
+| `STREAMFORGE_NORMALIZER` | Empty. Optionally use a Go regular expression to strip parts of stream names. |
 | `STREAMFORGE_VERIFY_TLS` | `true` |
 | `STREAMFORGE_CONFIRM` | `true` |
 | `STREAMFORGE_USER_AGENT` | `VLC/3.0.20 LibVLC/3.0.20` |

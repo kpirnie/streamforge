@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -52,7 +53,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 		}
 	}
 	if help || len(command) == 0 || (len(command) == 1 && command[0] == "dispatcharr") {
-		fmt.Println("Usage: streamforge dispatcharr <export|refresh|renumber|reorder|match|clear-epg> [--dry-run] [--yes] [--verbose]")
+		fmt.Println("Usage: streamforge dispatcharr <export|refresh|create-update|prune|match|renumber|reorder|clear-epg|all> [--dry-run] [--yes] [--verbose]")
 		return nil
 	}
 	if len(command) != 2 || command[0] != "dispatcharr" {
@@ -60,7 +61,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 	}
 	action := command[1]
 	switch action {
-	case "export", "refresh", "renumber", "reorder", "match", "clear-epg":
+	case "export", "refresh", "create-update", "prune", "renumber", "reorder", "match", "clear-epg", "all":
 	default:
 		return errors.New("unknown Dispatcharr command. Run streamforge dispatcharr --help")
 	}
@@ -114,6 +115,13 @@ func run(ctx context.Context, args []string) (runErr error) {
 	if err != nil {
 		findings = append(findings, errors.New("STREAMFORGE_CONFIRM must be a boolean"))
 	}
+	var normalizer *regexp.Regexp
+	if pattern := value("STREAMFORGE_NORMALIZER", ""); pattern != "" && (action == "all" || action == "create-update") {
+		normalizer, err = regexp.Compile(pattern)
+		if err != nil {
+			findings = append(findings, errors.New("STREAMFORGE_NORMALIZER must be a valid Go regular expression"))
+		}
+	}
 	base, user, password := value("DISP_URL", ""), value("DISP_USER", ""), value("DISP_PASS", "")
 	if base == "" || user == "" || password == "" {
 		findings = append(findings, errors.New("Dispatcharr requires DISP_URL, DISP_USER and DISP_PASS"))
@@ -140,18 +148,42 @@ func run(ctx context.Context, args []string) (runErr error) {
 	if err != nil {
 		return err
 	}
-	if action == "refresh" {
+	actions := []string{action}
+	if action == "all" {
+		actions = []string{"refresh", "create-update", "prune", "match", "renumber", "reorder"}
+	}
+	var failures []error
+	refreshFailed := false
+	for _, step := range actions {
+		if ctx.Err() != nil {
+			return errors.Join(append(failures, ctx.Err())...)
+		}
+		if step == "prune" && refreshFailed {
+			message("WARN", os.Stderr, "Skipped prune after refresh request failed")
+			continue
+		}
+		err := runDispatcharr(ctx, client, step, start, normalizer, dryRun, func(format string, args ...any) { message("INFO", os.Stdout, format, args...) })
+		if err != nil {
+			refreshFailed = step == "refresh"
+			failures = append(failures, fmt.Errorf("%s: %w", step, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action string, start int, normalizer *regexp.Regexp, dryRun bool, report func(string, ...any)) error {
+	switch action {
+	case "refresh":
 		if dryRun {
-			message("INFO", os.Stdout, "Would request Dispatcharr M3U refresh")
+			report("Would request Dispatcharr M3U refresh")
 			return nil
 		}
 		if err := client.Refresh(ctx); err != nil {
 			return err
 		}
-		message("INFO", os.Stdout, "Requested Dispatcharr M3U refresh")
+		report("Requested Dispatcharr M3U refresh")
 		return nil
-	}
-	if action == "export" {
+	case "export":
 		root, err := os.OpenRoot(workDir)
 		if err != nil {
 			return err
@@ -162,17 +194,31 @@ func run(ctx context.Context, args []string) (runErr error) {
 			return err
 		}
 		if dryRun {
-			message("INFO", os.Stdout, "Would export %d channels to /working/channels.csv", count)
+			report("Would export %d channels to /working/channels.csv", count)
 		} else {
-			message("INFO", os.Stdout, "Exported %d channels to /working/channels.csv", count)
+			report("Exported %d channels to /working/channels.csv", count)
 		}
 		return nil
+	case "prune":
+		result, err := client.Prune(ctx, dryRun)
+		if dryRun {
+			report("Would prune %d streams, %d channels and %d groups", result.Streams, result.Channels, result.Groups)
+		} else {
+			report("Pruned %d streams, %d channels and %d groups, %d failed", result.Streams, result.Channels, result.Groups, result.Failed)
+		}
+		return err
 	}
-	done, failed, err := client.UpdateChannels(ctx, action, start, dryRun)
-	if dryRun {
-		message("INFO", os.Stdout, "Would update %d channels", done)
+	var done, failed int
+	var err error
+	if action == "create-update" {
+		done, failed, err = client.SyncChannels(ctx, normalizer, dryRun)
 	} else {
-		message("INFO", os.Stdout, "Updated %d channels, %d failed", done, failed)
+		done, failed, err = client.UpdateChannels(ctx, action, start, dryRun)
+	}
+	if dryRun {
+		report("%s: would update %d channels", action, done)
+	} else {
+		report("%s: updated %d channels, %d failed", action, done, failed)
 	}
 	return err
 }

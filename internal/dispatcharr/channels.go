@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -17,14 +18,34 @@ import (
 )
 
 type channel struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	TVGID   string `json:"tvg_id"`
-	EPGID   int    `json:"epg_data_id"`
-	Streams []struct {
-		ID      int `json:"id"`
-		Account int `json:"m3u_account"`
-	} `json:"streams"`
+	ID             int             `json:"id"`
+	Name           string          `json:"name"`
+	TVGID          string          `json:"tvg_id"`
+	EPGID          int             `json:"epg_data_id"`
+	Group          int             `json:"channel_group_id"`
+	EffectiveGroup *int            `json:"effective_channel_group_id"`
+	Streams        []channelStream `json:"streams"`
+}
+
+type channelStream struct {
+	ID      int `json:"id"`
+	Account int `json:"m3u_account"`
+}
+
+// Dispatcharr sends IDs by default and stream objects with include_streams.
+func (s *channelStream) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		type wireStream channelStream
+		return json.Unmarshal(data, (*wireStream)(s))
+	}
+	return json.Unmarshal(data, &s.ID)
+}
+
+func (c channel) groupID() int {
+	if c.EffectiveGroup != nil {
+		return *c.EffectiveGroup
+	}
+	return c.Group
 }
 
 type update struct {
