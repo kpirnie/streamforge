@@ -1,0 +1,18 @@
+services:
+  streamforge:
+    image: ghcr.io/kpirnie/streamforge:dev
+    user: "${PUID:-1000}:${PGID:-1000}"
+    read_only: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./config:/config:ro
+      - ./working:/working:rw
+      # Optional for media commands. Use Linux binaries compatible with the image.
+      # - /host/bin/ffmpeg:/usr/local/bin/ffmpeg:ro
+      # - /host/bin/ffprobe:/usr/local/bin/ffprobe:ro
+    # Optional for Intel QSV or AMD VAAPI. Supply the matching driver and group too.
+    # devices:
+    #   - /dev/dri/renderD128:/dev/dri/renderD128
+    # group_add:
+    #   - "${RENDER_GID}"

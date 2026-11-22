@@ -23,10 +23,11 @@ import (
 
 	"github.com/kpirnie/streamforge/internal/dispatcharr"
 	"github.com/kpirnie/streamforge/internal/emby"
+	"github.com/kpirnie/streamforge/internal/media"
 	"github.com/kpirnie/streamforge/internal/xtream"
 )
 
-const workDir = "/working"
+const workDir = media.Working
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -37,7 +38,14 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string) (runErr error) {
+func run(ctx context.Context, args []string) error {
+	if len(args) == 0 && terminalAvailable(os.Stdin) && terminalAvailable(os.Stdout) {
+		return runTerminal(ctx)
+	}
+	return runCommand(ctx, args, nil, os.Stdout, os.Stderr)
+}
+
+func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr io.Writer) (runErr error) {
 	var command []string
 	var dryRun, verbose, yes, help bool
 	for _, arg := range args {
@@ -54,25 +62,46 @@ func run(ctx context.Context, args []string) (runErr error) {
 			command = append(command, arg)
 		}
 	}
-	if help || len(command) == 0 || (len(command) == 1 && (command[0] == "dispatcharr" || command[0] == "emby" || command[0] == "series")) {
+	if help || len(command) == 0 || (len(command) == 1 && (command[0] == "dispatcharr" || command[0] == "emby" || command[0] == "series" || command[0] == "movies")) {
+		if len(command) == 0 || command[0] == "diagnostics" {
+			fmt.Fprintln(out, "Usage: streamforge diagnostics [--json] [--save]")
+		}
+		if len(command) == 0 || command[0] == "movies" {
+			fmt.Fprintln(out, "Usage: streamforge movies transcode PATH [--codec=keep|hevc|av1] [--container=keep|mkv|mp4] [--force] [--convert-hdr]")
+		}
+		if len(command) == 0 || command[0] == "strm" {
+			fmt.Fprintln(out, "Usage: streamforge strm PATH [--playback-parent=PATH] [--dry-run]")
+		}
 		if len(command) == 0 || command[0] == "dispatcharr" {
-			fmt.Println("Usage: streamforge dispatcharr <export|refresh|create-update|prune|match|renumber|reorder|clear-epg|all> [--dry-run] [--yes] [--verbose]")
+			fmt.Fprintln(out, "Usage: streamforge dispatcharr <export|refresh|create-update|prune|match|renumber|reorder|clear-epg|all> [--dry-run] [--yes] [--verbose]")
 		}
 		if len(command) == 0 || command[0] == "emby" {
-			fmt.Println("Usage: streamforge emby <refresh|logos|numbers|all> [--dry-run] [--yes] [--verbose]")
+			fmt.Fprintln(out, "Usage: streamforge emby <refresh|logos|numbers|all> [--dry-run] [--yes] [--verbose]")
 		}
 		if len(command) == 0 || command[0] == "series" {
-			fmt.Println("Usage: streamforge series search [--provider NAME] TITLE")
-			fmt.Println("       streamforge series episodes --provider NAME SERIES_ID")
+			fmt.Fprintln(out, "Usage: streamforge series search [--provider NAME] TITLE")
+			fmt.Fprintln(out, "       streamforge series episodes --provider NAME SERIES_ID")
+			fmt.Fprintln(out, "       streamforge series transcode PATH [OPTIONS]")
+			fmt.Fprintln(out, "       streamforge series download --provider NAME SERIES_ID [--all-episodes|--episode=ID] [--process]")
 		}
 		return nil
+	}
+	if command[0] == "diagnostics" {
+		if logs == nil {
+			file, _ := openLog()
+			if file != nil {
+				defer file.Close()
+			}
+			logs = file
+		}
+		return runDiagnostics(ctx, command[1:], out, logs, dryRun)
 	}
 	if len(command) < 2 {
 		return errors.New("unknown command. Run streamforge --help")
 	}
 	service, action := command[0], command[1]
 	var series seriesCommand
-	if service != "series" && len(command) != 2 {
+	if service != "series" && service != "strm" && service != "movies" && len(command) != 2 {
 		return errors.New("unexpected command arguments. Run streamforge --help")
 	}
 	switch service {
@@ -82,7 +111,15 @@ func run(ctx context.Context, args []string) (runErr error) {
 		default:
 			return errors.New("unknown Dispatcharr command. Run streamforge dispatcharr --help")
 		}
+	case "strm":
+	case "movies":
+		if action != "transcode" {
+			return errors.New("select movies transcode")
+		}
 	case "series":
+		if action == "transcode" {
+			break
+		}
 		parsed, err := parseSeries(command[1:])
 		if err != nil {
 			return err
@@ -97,11 +134,14 @@ func run(ctx context.Context, args []string) (runErr error) {
 	default:
 		return errors.New("unknown command. Run streamforge --help")
 	}
-	logs, err := openLog()
-	if err != nil {
-		return fmt.Errorf("open session log: %w", err)
+	if logs == nil {
+		var err error
+		logs, err = openLog()
+		if err != nil {
+			return fmt.Errorf("open session log: %w", err)
+		}
+		defer logs.Close()
 	}
-	defer logs.Close()
 	message := func(level string, terminal io.Writer, format string, args ...any) {
 		line := fmt.Sprintf("%s %s %s\n", time.Now().Format("2006-01-02 15:04:05"), level, fmt.Sprintf(format, args...))
 		fmt.Fprint(logs, line)
@@ -115,7 +155,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 		}
 	}()
 	if verbose {
-		message("DEBUG", os.Stderr, "%s action %s, dry run: %t", service, action, dryRun)
+		message("DEBUG", stderr, "%s action %s, dry run: %t", service, action, dryRun)
 	}
 	settings, err := readEnvironment()
 	if err != nil {
@@ -170,30 +210,45 @@ func run(ctx context.Context, args []string) (runErr error) {
 	if err := errors.Join(findings...); err != nil {
 		return err
 	}
-	if service != "series" && confirm && !dryRun && !yes && action != "export" {
+	if service != "series" && service != "strm" && service != "movies" && !(service == "series" && action == "transcode") && confirm && !dryRun && !yes && action != "export" {
 		return errors.New("confirm changes with --yes, or preview with --dry-run")
 	}
 	if !verifyTLS {
-		message("WARN", os.Stderr, "TLS certificate verification is disabled")
+		message("WARN", stderr, "TLS certificate verification is disabled")
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := makeTransport(timeout, verifyTLS)
 	defer transport.CloseIdleConnections()
-	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
-	transport.DialContext = dialer.DialContext
-	transport.TLSHandshakeTimeout = timeout
-	transport.ResponseHeaderTimeout = timeout
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !verifyTLS}
 	agent := value("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20")
-	report := func(format string, args ...any) { message("INFO", os.Stdout, format, args...) }
+	report := func(format string, args ...any) { message("INFO", out, format, args...) }
+	parent := value("STREAMFORGE_PLAYBACK_PARENT", "")
+	if !dryRun && (service == "strm" || service == "movies" || (service == "series" && (action == "download" || action == "transcode")) || (service == "dispatcharr" && action == "export")) {
+		if root, err := os.OpenRoot(workDir); err == nil {
+			cleanupErr := media.CleanTemporary(root)
+			root.Close()
+			if cleanupErr != nil {
+				message("WARN", stderr, "Some abandoned temporary files could not be cleaned")
+			}
+		}
+	}
+	titles := media.NewTitles(value("TMDB_API_KEY", ""), agent, timeout, transport, func(format string, args ...any) { message("WARN", stderr, format, args...) })
+	if (service == "movies" || service == "series") && action == "transcode" {
+		return runTranscode(ctx, command[2:], nil, titles, value, dryRun, yes || !confirm, report)
+	}
+	if service == "strm" {
+		return runSTRM(ctx, command[1:], parent, value("STREAMFORGE_EXCLUDE", ""), titles, dryRun, report)
+	}
 	if service == "series" {
 		providers, warnings, err := xtream.LoadProviders("/config/providers.json", agent, timeout, transport)
 		for _, warning := range warnings {
-			message("WARN", os.Stderr, "%s", warning)
+			message("WARN", stderr, "%s", warning)
 		}
 		if err != nil {
 			return err
 		}
-		return runSeries(ctx, providers, series, os.Stdout, func(format string, args ...any) { message("WARN", os.Stderr, format, args...) })
+		if series.action == "download" {
+			return runDownload(ctx, providers, series, parent, titles, value, dryRun, yes || !confirm, report)
+		}
+		return runSeries(ctx, providers, series, out, func(format string, args ...any) { message("WARN", stderr, format, args...) })
 	}
 	if service == "emby" {
 		client, err := emby.Connect(ctx, embyHost, embyKey, agent, timeout, transport)
@@ -219,7 +274,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 			return errors.Join(append(failures, ctx.Err())...)
 		}
 		if step == "prune" && refreshFailed {
-			message("WARN", os.Stderr, "Skipped prune after refresh request failed")
+			message("WARN", stderr, "Skipped prune after refresh request failed")
 			continue
 		}
 		err := runDispatcharr(ctx, client, step, start, normalizer, dryRun, report)
@@ -229,6 +284,16 @@ func run(ctx context.Context, args []string) (runErr error) {
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func makeTransport(timeout time.Duration, verifyTLS bool) *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	transport.DialContext = dialer.DialContext
+	transport.TLSHandshakeTimeout = timeout
+	transport.ResponseHeaderTimeout = timeout
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !verifyTLS}
+	return transport
 }
 
 func runEmby(ctx context.Context, client *emby.Client, action, playlist string, dryRun bool, report func(string, ...any)) error {
@@ -373,7 +438,7 @@ func openLog() (*os.File, error) {
 		if i > 0 {
 			path = fmt.Sprintf("%s-%d.log", stem, i)
 		}
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 		if !errors.Is(err, os.ErrExist) {
 			return file, err
 		}

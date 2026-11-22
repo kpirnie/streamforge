@@ -6,7 +6,6 @@ package dispatcharr
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/kpirnie/streamforge/internal/media"
 )
 
 type channel struct {
@@ -63,26 +64,20 @@ func (c *Client) Export(ctx context.Context, root *os.Root, dryRun bool) (int, e
 		return len(channels), nil
 	}
 	alphabetical(channels)
-	tempName := ".streamforge-export-" + rand.Text()
-	file, err := root.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
-	if err != nil {
-		return 0, err
-	}
-	defer root.Remove(tempName)
-	writer := csv.NewWriter(file)
-	err = writer.Write([]string{"Channel Name", "TVG ID"})
-	for _, record := range channels {
-		if err != nil {
-			break
+	err = media.AtomicWrite(ctx, root, "channels.csv", 0666, true, func(file *os.File) error {
+		writer := csv.NewWriter(file)
+		if err := writer.Write([]string{"Channel Name", "TVG ID"}); err != nil {
+			return err
 		}
-		err = writer.Write([]string{record.Name, record.TVGID})
-	}
-	writer.Flush()
-	err = errors.Join(err, writer.Error(), file.Close(), ctx.Err())
+		for _, record := range channels {
+			if err := writer.Write([]string{record.Name, record.TVGID}); err != nil {
+				return err
+			}
+		}
+		writer.Flush()
+		return writer.Error()
+	})
 	if err != nil {
-		return 0, err
-	}
-	if err = root.Rename(tempName, "channels.csv"); err != nil {
 		return 0, err
 	}
 	return len(channels), nil

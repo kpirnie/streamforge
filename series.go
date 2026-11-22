@@ -15,15 +15,19 @@ import (
 )
 
 type seriesCommand struct {
-	action   string
-	provider string
-	argument string
+	action      string
+	provider    string
+	argument    string
+	episodes    []string
+	allEpisodes bool
+	redownload  bool
+	process     bool
 }
 
 func parseSeries(args []string) (seriesCommand, error) {
 	var command seriesCommand
 	if len(args) == 0 {
-		return command, errors.New("select series search or series episodes")
+		return command, errors.New("select series search, episodes, or download")
 	}
 	command.action = args[0]
 	var positionals []string
@@ -41,11 +45,22 @@ func parseSeries(args []string) (seriesCommand, error) {
 				return command, errors.New("specify a single provider")
 			}
 			command.provider = strings.TrimPrefix(arg, "--provider=")
+		case arg == "--all-episodes":
+			command.allEpisodes = true
+		case arg == "--process":
+			command.process = true
+		case arg == "--redownload":
+			command.redownload = true
+		case strings.HasPrefix(arg, "--episode="):
+			command.episodes = append(command.episodes, strings.TrimPrefix(arg, "--episode="))
 		case strings.HasPrefix(arg, "--"):
 			return command, errors.New("unknown series option")
 		default:
 			positionals = append(positionals, arg)
 		}
+	}
+	if command.action != "download" && (command.allEpisodes || command.redownload || command.process || len(command.episodes) > 0) {
+		return command, errors.New("episode selection flags apply to series download")
 	}
 	switch command.action {
 	case "search":
@@ -53,13 +68,18 @@ func parseSeries(args []string) (seriesCommand, error) {
 		if command.argument == "" {
 			return command, errors.New("series search requires a title")
 		}
+	case "download":
+		if command.provider == "" || len(positionals) != 1 || command.allEpisodes == (len(command.episodes) > 0) {
+			return command, errors.New("series download requires a provider, a series ID, and --all-episodes or --episode=ID")
+		}
+		command.argument = positionals[0]
 	case "episodes":
 		if command.provider == "" || len(positionals) != 1 {
 			return command, errors.New("series episodes requires --provider and a series ID")
 		}
 		command.argument = positionals[0]
 	default:
-		return command, errors.New("select series search or series episodes")
+		return command, errors.New("select series search, episodes, or download")
 	}
 	return command, nil
 }

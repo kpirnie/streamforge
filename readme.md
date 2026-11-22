@@ -1,6 +1,6 @@
 # Stream Forge
 
-Stream Forge is a one-shot Linux CLI for media administration. The initial development build implements Dispatcharr and Emby commands.
+Stream Forge is a Linux terminal application for Dispatcharr, Emby, and media administration. Run with no arguments on a TTY to open the interactive menu. Explicit commands run once and exit.
 
 ```sh
 go build -o streamforge .
@@ -56,7 +56,35 @@ streamforge series search "Example Series"
 streamforge series episodes --provider "Example Provider" 123
 ```
 
-Provider priority sorts from low to high. Provider headers can override the global user agent. The configuration also accepts download settings `concurrent`, `retries`, `retry_delay` as a duration, and aggregate `bandwidth_kbps` in KB/s, with 0 for unlimited. Provider downloads are pending.
+Provider priority sorts from low to high. Provider headers can override the global user agent. The configuration also accepts download settings `concurrent`, `retries`, `retry_delay` as a duration, and aggregate `bandwidth_kbps` in KB/s, with 0 for unlimited.
+
+## Downloads and media
+
+Create `working/input` and `working/output`. Set `STREAMFORGE_PLAYBACK_PARENT` to the absolute player-visible directory that contains the mapped `input` and `output` trees. For example, `/library` yields playback paths such as `/library/input/show/episode.mkv`. Downloads are stored under a provider-specific directory and series ID in `input`; processed files and companions use the corresponding relative directory under `output`.
+
+```sh
+streamforge series download --provider "Example Provider" 123 --episode=456
+streamforge series download --provider "Example Provider" 123 --all-episodes --process
+streamforge movies transcode movies --codec=hevc --container=mkv
+streamforge series transcode shows --convert-hdr
+streamforge strm input/shows --playback-parent=/library
+streamforge diagnostics --json
+streamforge diagnostics --save
+```
+
+`--redownload --yes` replaces an episode after FFprobe validation. `--force` permits reprocessing corresponding outputs while preserving existing media until a replacement succeeds. `--delete-original --yes` removes an original only after successful conversion. Use `--exclude=GLOBS` for comma-separated basename patterns. Set `TMDB_API_KEY` to enable companion filename enrichment. Media filenames remain as supplied.
+
+Media commands use host-mounted FFmpeg and FFprobe. The default paths are `/usr/local/bin/ffmpeg` and `/usr/local/bin/ffprobe`. Use statically linked Linux binaries for the image architecture, or provide the runtime libraries and loader needed by the mounted executables. For GPU encoding, pass the device nodes, matching host libraries, and supplementary groups that grant read/write device access. Device paths and drivers depend on the host. NVIDIA container integration can supply its driver libraries and devices. Intel and AMD generally require the applicable `/dev/dri/renderD*` node and user-space driver. A usable CPU encoder allows fallback.
+
+## Interactive and scheduled use
+
+Use `docker compose run --rm streamforge` to open the terminal interface. Arrow keys move, typing filters the current list, Enter selects, and Esc returns or cancels an active operation. Ctrl+C exits. Completed operations retain their results until Enter returns to the menu. For SSH, allocate a terminal with `ssh -t` when opening the TUI.
+
+For cron, pass the command explicitly and omit interactive options. For example, with the paths mounted by the supplied Compose file:
+
+```cron
+15 3 * * * cd /srv/streamforge && docker compose run --rm -T streamforge dispatcharr export
+```
 
 ## Container
 
