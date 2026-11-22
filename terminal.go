@@ -396,6 +396,7 @@ func runTerminal(ctx context.Context) error {
 		width, height := terminalDimensions()
 		frame := []string{fmt.Sprintf("Stream Forge  |  %s  |  %s", status.Runtime, status.Encoder), fmt.Sprintf("Emby %s  |  Dispatcharr %s", strings.Fields(status.Services["Emby"])[0], strings.Fields(status.Services["Dispatcharr"])[0]), browser.heading(page), ""}
 		footer := "↑↓ Navigate   Enter Select   Esc Back   Ctrl+C Exit"
+		var activeDownloads []string
 		switch mode {
 		case "menu":
 			if filter != "" {
@@ -438,8 +439,21 @@ func runTerminal(ctx context.Context) error {
 				frame = append(frame, state.note)
 			}
 			if len(state.active) > 0 {
-				activeSelection = min(activeSelection, len(state.active)-1)
-				frame = append(frame, "› "+state.active[activeSelection])
+				slots := max(0, height-len(frame)-1)
+				if slots > 0 {
+					activeDownloads = state.active
+					activeSelection = min(activeSelection, len(activeDownloads)-1)
+					first := max(0, activeSelection-slots+1)
+					for i, label := range activeDownloads[first:min(len(activeDownloads), first+slots)] {
+						marker := "  "
+						if first+i == activeSelection {
+							marker = "› "
+						}
+						frame = append(frame, marker+label)
+					}
+				}
+			}
+			if len(activeDownloads) > 0 {
 				footer = "↑↓ Active downloads  X Cancel selected  Esc Cancel all"
 			}
 		case "result", "startup":
@@ -591,8 +605,17 @@ func runTerminal(ctx context.Context) error {
 					mode = "menu"
 				}
 			case "running":
-				if key == "escape" {
+				switch key {
+				case "escape":
 					cancelOperation()
+				case "up":
+					activeSelection = max(0, activeSelection-1)
+				case "down":
+					activeSelection = min(activeSelection+1, max(0, len(activeDownloads)-1))
+				case "text:x", "text:X":
+					if len(activeDownloads) > 0 {
+						progress.cancel(activeDownloads[activeSelection])
+					}
 				}
 			case "result":
 				switch key {
