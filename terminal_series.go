@@ -50,7 +50,7 @@ func (s *terminalSeries) choices(page string) []terminalChoice {
 		return append(choices, terminalChoice{label: "Download queue", page: downloadQueue})
 	case matchingEpisodes:
 		choices := []terminalChoice{
-			{label: "Select All Episodes", mark: "all"},
+			{label: "Add All Episodes to Download Queue", mark: "all"},
 			{label: "Deselect All Episodes", mark: "none"},
 			{label: "Download queue", page: downloadQueue},
 		}

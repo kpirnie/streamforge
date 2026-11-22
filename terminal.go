@@ -476,6 +476,10 @@ func runTerminal(ctx context.Context) error {
 			mode, scroll = "result", 0
 			if completion.preview && !completion.failed {
 				mode = "confirm"
+			} else if !completion.failed {
+				if destination := browser.browse(discovered); destination != "" {
+					navigate(destination)
+				}
 			}
 		case key, ok := <-keys:
 			if !ok {

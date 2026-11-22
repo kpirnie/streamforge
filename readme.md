@@ -248,7 +248,7 @@ The report includes build information, runtime, service status, mounted paths, m
 
 Choose **Continue with Defaults** or enter the settings available for the session. Use arrow keys to move, type to filter the current list, and press Enter to select. Protected actions present a preview. Press Y to proceed or Enter to decline. Results stay visible until you return. Esc goes back or cancels the active operation. Ctrl+C exits.
 
-For series, open **Search providers**, press B to browse the results, choose a series, then press B to select episodes. Toggle episodes individually or as a season and add selections across providers to the **Download queue**. Choose **Download Only** or **Download and Process**. During a transfer, use the arrows and X to cancel one active download, or Esc to cancel the batch.
+For series, open **Search providers** and choose a match from the results menu. Choose **Add All Episodes to Download Queue** or toggle individual episodes and seasons. You can queue episodes across providers, then choose **Download Only** or **Download and Process** from the **Download queue**. If some providers fail, press B on the search report to browse any available matches. During a transfer, use the arrows and X to cancel one active download, or Esc to cancel the batch.
 
 **System Status** shows connectivity and tool availability and offers **Retry Connections**, **Copy Diagnostics**, and **Save diagnostics**. Clipboard copy uses the terminal when supported and saves a report otherwise.
 
