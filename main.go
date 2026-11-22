@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kpirnie/streamforge/internal/dispatcharr"
+	"github.com/kpirnie/streamforge/internal/emby"
 )
 
 const workDir = "/working"
@@ -52,18 +53,34 @@ func run(ctx context.Context, args []string) (runErr error) {
 			command = append(command, arg)
 		}
 	}
-	if help || len(command) == 0 || (len(command) == 1 && command[0] == "dispatcharr") {
-		fmt.Println("Usage: streamforge dispatcharr <export|refresh|create-update|prune|match|renumber|reorder|clear-epg|all> [--dry-run] [--yes] [--verbose]")
+	if help || len(command) == 0 || (len(command) == 1 && (command[0] == "dispatcharr" || command[0] == "emby")) {
+		if len(command) == 0 || command[0] == "dispatcharr" {
+			fmt.Println("Usage: streamforge dispatcharr <export|refresh|create-update|prune|match|renumber|reorder|clear-epg|all> [--dry-run] [--yes] [--verbose]")
+		}
+		if len(command) == 0 || command[0] == "emby" {
+			fmt.Println("Usage: streamforge emby <refresh|logos|numbers|all> [--dry-run] [--yes] [--verbose]")
+		}
 		return nil
 	}
-	if len(command) != 2 || command[0] != "dispatcharr" {
+	if len(command) != 2 {
 		return errors.New("unknown command. Run streamforge --help")
 	}
-	action := command[1]
-	switch action {
-	case "export", "refresh", "create-update", "prune", "renumber", "reorder", "match", "clear-epg", "all":
+	service, action := command[0], command[1]
+	switch service {
+	case "dispatcharr":
+		switch action {
+		case "export", "refresh", "create-update", "prune", "renumber", "reorder", "match", "clear-epg", "all":
+		default:
+			return errors.New("unknown Dispatcharr command. Run streamforge dispatcharr --help")
+		}
+	case "emby":
+		switch action {
+		case "refresh", "logos", "numbers", "all":
+		default:
+			return errors.New("unknown Emby command. Run streamforge emby --help")
+		}
 	default:
-		return errors.New("unknown Dispatcharr command. Run streamforge dispatcharr --help")
+		return errors.New("unknown command. Run streamforge --help")
 	}
 	logs, err := openLog()
 	if err != nil {
@@ -83,7 +100,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 		}
 	}()
 	if verbose {
-		message("DEBUG", os.Stderr, "Dispatcharr action %s, dry run: %t", action, dryRun)
+		message("DEBUG", os.Stderr, "%s action %s, dry run: %t", service, action, dryRun)
 	}
 	settings, err := readEnvironment()
 	if err != nil {
@@ -104,7 +121,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 		findings = append(findings, errors.New("STREAMFORGE_TIMEOUT must be a positive duration"))
 	}
 	start, err := strconv.Atoi(value("STREAMFORGE_START_CHANNEL", "1"))
-	if err != nil || start < 1 {
+	if service == "dispatcharr" && (err != nil || start < 1) {
 		findings = append(findings, errors.New("STREAMFORGE_START_CHANNEL must be a positive integer"))
 	}
 	verifyTLS, err := strconv.ParseBool(value("STREAMFORGE_VERIFY_TLS", "true"))
@@ -116,21 +133,30 @@ func run(ctx context.Context, args []string) (runErr error) {
 		findings = append(findings, errors.New("STREAMFORGE_CONFIRM must be a boolean"))
 	}
 	var normalizer *regexp.Regexp
-	if pattern := value("STREAMFORGE_NORMALIZER", ""); pattern != "" && (action == "all" || action == "create-update") {
+	if pattern := value("STREAMFORGE_NORMALIZER", ""); pattern != "" && service == "dispatcharr" && (action == "all" || action == "create-update") {
 		normalizer, err = regexp.Compile(pattern)
 		if err != nil {
 			findings = append(findings, errors.New("STREAMFORGE_NORMALIZER must be a valid Go regular expression"))
 		}
 	}
 	base, user, password := value("DISP_URL", ""), value("DISP_USER", ""), value("DISP_PASS", "")
-	if base == "" || user == "" || password == "" {
+	if service == "dispatcharr" && (base == "" || user == "" || password == "") {
 		findings = append(findings, errors.New("Dispatcharr requires DISP_URL, DISP_USER and DISP_PASS"))
+	}
+	embyHost, embyKey, playlist := value("EMBY_HOST", ""), value("EMBY_API_KEY", ""), value("DISP_M3U_URL", "")
+	if service == "emby" {
+		if embyHost == "" || embyKey == "" {
+			findings = append(findings, errors.New("Emby requires EMBY_HOST and EMBY_API_KEY"))
+		}
+		if (action == "logos" || action == "all") && playlist == "" {
+			findings = append(findings, errors.New("Emby logos require DISP_M3U_URL"))
+		}
 	}
 	if err := errors.Join(findings...); err != nil {
 		return err
 	}
 	if confirm && !dryRun && !yes && action != "export" {
-		return errors.New("confirm Dispatcharr changes with --yes, or preview with --dry-run")
+		return errors.New("confirm changes with --yes, or preview with --dry-run")
 	}
 	if !verifyTLS {
 		message("WARN", os.Stderr, "TLS certificate verification is disabled")
@@ -142,8 +168,17 @@ func run(ctx context.Context, args []string) (runErr error) {
 	transport.TLSHandshakeTimeout = timeout
 	transport.ResponseHeaderTimeout = timeout
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !verifyTLS}
+	agent := value("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20")
+	report := func(format string, args ...any) { message("INFO", os.Stdout, format, args...) }
+	if service == "emby" {
+		client, err := emby.Connect(ctx, embyHost, embyKey, agent, timeout, transport)
+		if err != nil {
+			return err
+		}
+		return runEmby(ctx, client, action, playlist, dryRun, report)
+	}
 	authContext, cancel := context.WithTimeout(ctx, timeout)
-	client, err := dispatcharr.Connect(authContext, base, user, password, value("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, transport)
+	client, err := dispatcharr.Connect(authContext, base, user, password, agent, timeout, transport)
 	cancel()
 	if err != nil {
 		return err
@@ -162,10 +197,54 @@ func run(ctx context.Context, args []string) (runErr error) {
 			message("WARN", os.Stderr, "Skipped prune after refresh request failed")
 			continue
 		}
-		err := runDispatcharr(ctx, client, step, start, normalizer, dryRun, func(format string, args ...any) { message("INFO", os.Stdout, format, args...) })
+		err := runDispatcharr(ctx, client, step, start, normalizer, dryRun, report)
 		if err != nil {
 			refreshFailed = step == "refresh"
 			failures = append(failures, fmt.Errorf("%s: %w", step, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func runEmby(ctx context.Context, client *emby.Client, action, playlist string, dryRun bool, report func(string, ...any)) error {
+	actions := []string{action}
+	if action == "all" {
+		actions = []string{"refresh", "logos", "numbers"}
+	}
+	var failures []error
+	for _, step := range actions {
+		if ctx.Err() != nil {
+			return errors.Join(append(failures, ctx.Err())...)
+		}
+		var counts emby.Counts
+		var err error
+		switch step {
+		case "refresh":
+			if !dryRun {
+				report("Waiting for Emby guide refresh")
+			}
+			err = client.RefreshGuide(ctx, dryRun)
+			if err == nil {
+				if dryRun {
+					report("Would refresh the Emby guide")
+				} else {
+					report("Emby guide refresh completed")
+				}
+			}
+		case "logos":
+			counts, err = client.RefreshLogos(ctx, playlist, dryRun)
+		case "numbers":
+			counts, err = client.ClearNumbers(ctx, dryRun)
+		}
+		if step != "refresh" {
+			if dryRun {
+				report("Emby %s: would update %d channels, %d unmatched, %d failed", step, counts.Done, counts.Unmatched, counts.Failed)
+			} else {
+				report("Emby %s: updated %d channels, %d unmatched, %d failed", step, counts.Done, counts.Unmatched, counts.Failed)
+			}
+		}
+		if err != nil {
+			failures = append(failures, fmt.Errorf("Emby %s: %w", step, err))
 		}
 	}
 	return errors.Join(failures...)

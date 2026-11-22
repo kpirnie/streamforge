@@ -1,6 +1,6 @@
 # Stream Forge
 
-Stream Forge is a one-shot Linux CLI for media administration. The initial development build implements Dispatcharr commands.
+Stream Forge is a one-shot Linux CLI for media administration. The initial development build implements Dispatcharr and Emby commands.
 
 ```sh
 go build -o streamforge .
@@ -33,6 +33,21 @@ Dispatcharr queues the refresh asynchronously. The later steps of `all` use the 
 | `STREAMFORGE_VERIFY_TLS` | `true` |
 | `STREAMFORGE_CONFIRM` | `true` |
 | `STREAMFORGE_USER_AGENT` | `VLC/3.0.20 LibVLC/3.0.20` |
+
+## Emby
+
+Set `EMBY_HOST` to the Emby server URL and `EMBY_API_KEY` to its API key. For `logos` and `all`, also set `DISP_M3U_URL` to the Dispatcharr playlist URL.
+
+| Command | Operation |
+| --- | --- |
+| `emby refresh` | Start guide refresh and wait for the result, polling every five seconds for up to 30 minutes. |
+| `emby logos` | Update logo variants for uniquely matched channels. |
+| `emby numbers` | Clear channel numbers and their associated field locks. |
+| `emby all` | Refresh the guide, then update logos, then clear numbers. A failed refresh is reported and the channel updates still run. |
+
+Use `--dry-run` to preview or `--yes` to apply changes.
+
+## Container
 
 Mount an existing config directory and a writable working directory. The image runs with UID and GID 1000 by default. Use the `PUID` and `PGID` build arguments or the runtime's `--user` option to select an identity with access to those mounts.
 
