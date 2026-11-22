@@ -51,7 +51,7 @@ func waitFor(ctx context.Context, delay time.Duration) error {
 }
 
 // DownloadBatch runs episode transfers within one provider's concurrency and bandwidth limits.
-func (p *Providers) DownloadBatch(ctx context.Context, name string, episodes []Episode, transfer func(Episode, func(*os.File, func() error) error)) error {
+func (p *Providers) DownloadBatch(ctx context.Context, name string, episodes []Episode, transfer func(Episode, func(context.Context, *os.File, func() error) error)) error {
 	selected, err := p.selectProviders(name)
 	if err != nil {
 		return err
@@ -70,8 +70,8 @@ func (p *Providers) DownloadBatch(ctx context.Context, name string, episodes []E
 	for range min(parallel, len(episodes)) {
 		workers.Go(func() {
 			for episode := range jobs {
-				transfer(episode, func(file *os.File, validate func() error) error {
-					return p.download(ctx, entry, episode, limiter, file, validate)
+				transfer(episode, func(work context.Context, file *os.File, validate func() error) error {
+					return p.download(work, entry, episode, limiter, file, validate)
 				})
 			}
 		})

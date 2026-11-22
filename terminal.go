@@ -7,11 +7,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/kpirnie/streamforge/internal/media"
+	"github.com/kpirnie/streamforge/internal/xtream"
 	"io"
+	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +31,11 @@ type terminalChoice struct {
 	page    string
 	prompt  string
 	confirm bool
+	mark    string
+	season  int
+	episode string
+	setting string
+	secret  bool
 }
 
 var terminalMenus = map[string][]terminalChoice{
@@ -57,6 +67,7 @@ var terminalMenus = map[string][]terminalChoice{
 	},
 	"Series": {
 		{label: "Search providers", args: []string{"series", "search"}, prompt: "Title"},
+		{label: "Download queue", page: downloadQueue},
 		{label: "List episodes", args: []string{"series", "episodes"}, prompt: "Provider name | Series ID"},
 		{label: "Download series", args: []string{"series", "download"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
 		{label: "Download and process", args: []string{"series", "download", "--process"}, prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", confirm: true},
@@ -66,6 +77,7 @@ var terminalMenus = map[string][]terminalChoice{
 		{label: "Show status", args: []string{"diagnostics"}},
 		{label: "Retry Connections", args: []string{"diagnostics"}, page: ""},
 		{label: "Save diagnostics", args: []string{"diagnostics", "--save"}},
+		{label: "Copy Diagnostics", args: []string{"diagnostics"}},
 	},
 }
 
@@ -220,8 +232,26 @@ func runTerminal(ctx context.Context) error {
 	}
 	defer session.Close()
 
+	settings, _ := readEnvironment()
+	values := make(map[string]string)
+	startupValue := func(key, fallback string) string { return sessionValue(key, fallback, settings, nil) }
+	timeout, err := time.ParseDuration(startupValue("STREAMFORGE_TIMEOUT", "30s"))
+	if err != nil || timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	verify, err := strconv.ParseBool(startupValue("STREAMFORGE_VERIFY_TLS", "true"))
+	verify = err != nil || verify
+	providerTransport := makeTransport(timeout, verify)
+	defer providerTransport.CloseIdleConnections()
+	providers, warnings, providerErr := xtream.LoadProviders("/config/providers.json", startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, providerTransport)
+	providerCache := &cachedProviders{providers: providers, err: providerErr, titles: media.NewTitles(startupValue("TMDB_API_KEY", ""), startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, providerTransport, func(format string, args ...any) {
+		fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+	})}
+	for _, warning := range warnings {
+		fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), warning)
+	}
 	startup := make(chan statusReport, 1)
-	go func() { startup <- diagnosticStatus(ctx, session) }()
+	go func() { startup <- diagnosticStatus(ctx, session, nil) }()
 	splash := time.NewTimer(5 * time.Second)
 	defer splash.Stop()
 	var status statusReport
@@ -246,34 +276,67 @@ func runTerminal(ctx context.Context) error {
 	var choice terminalChoice
 	var arguments []string
 	var result string
+	var discovered seriesDiscovery
+	browser := terminalSeries{selected: make(map[seriesKey]map[string]bool)}
+	if len(terminalSettings(settings, values)) > 1 {
+		page = sessionSettings
+	}
 	var cancelOperation context.CancelFunc
 	type operationResult struct {
-		text   string
-		status *statusReport
+		clipboard string
+		discovery seriesDiscovery
+		text      string
+		status    *statusReport
+		preview   bool
+		failed    bool
 	}
 	finished := make(chan operationResult, 1)
 	var started time.Time
+	var progress *operationProgress
+	activeSelection := 0
+	for _, warning := range status.Warnings {
+		fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), warning)
+	}
 	if len(status.Findings) != 0 {
 		mode, result = "startup", strings.Join(status.Findings, "\n")
 	}
 	navigate := func(destination string) {
 		page, mode, filter, input, selection, scroll = destination, "menu", "", "", 0, 0
 	}
-	launch := func() {
+	launch := func(preview bool) {
 		operation, cancel := context.WithCancel(ctx)
 		cancelOperation = cancel
 		mode, started = "running", time.Now()
+		progress = &operationProgress{active: make(map[string]context.CancelFunc)}
+		activeSelection = 0
+		currentProgress := progress
+		currentValues := maps.Clone(values)
 		args := slices.Clone(arguments)
+		if preview {
+			args = append(args, "--dry-run")
+		}
 		retry := choice.label == "Retry Connections"
+		copyReport := choice.label == "Copy Diagnostics"
+		clipboard := copyReport && supportsClipboard()
+		if copyReport && !clipboard {
+			args = append(args, "--save")
+		}
 		go func() {
 			defer cancel()
 			buffer := &terminalBuffer{}
 			var refreshed *statusReport
 			if retry {
-				result := diagnosticStatus(operation, session)
+				result := diagnosticStatus(operation, session, currentValues)
 				refreshed = &result
 			}
-			err := runCommand(operation, args, session, buffer, buffer)
+			var discovery seriesDiscovery
+			err := runCommand(operation, args, session, buffer, buffer, &discovery, currentProgress, currentValues, providerCache)
+			var copied string
+			if clipboard && err == nil {
+				copied = base64.StdEncoding.EncodeToString(buffer.Bytes())
+				buffer.Reset()
+				fmt.Fprintln(buffer, "Sent diagnostics to the terminal clipboard.")
+			}
 			switch {
 			case operation.Err() != nil:
 				fmt.Fprintln(buffer, "Cancelled.")
@@ -282,16 +345,26 @@ func runTerminal(ctx context.Context) error {
 			default:
 				fmt.Fprintln(buffer, "Completed.")
 			}
-			finished <- operationResult{buffer.String(), refreshed}
+			finished <- operationResult{copied, discovery, buffer.String(), refreshed, preview, err != nil || operation.Err() != nil}
 		}()
 	}
 	for {
-		menu := terminalMenus[page]
-		if page != "Main" {
-			menu = append(slices.Clone(menu), terminalChoice{label: "Back to Previous", page: "Main"}, terminalChoice{label: "Back to Main", page: "Main"}, terminalChoice{label: "Exit"})
+		menu := browser.choices(page)
+		if page == sessionSettings {
+			menu = terminalSettings(settings, values)
+		}
+		if page != "Main" && page != sessionSettings {
+			menu = append(slices.Clone(menu), terminalChoice{label: "Back to Previous", page: terminalPrevious(page)}, terminalChoice{label: "Back to Main", page: "Main"}, terminalChoice{label: "Exit"})
 		}
 		available := make([]terminalChoice, 0, len(menu))
 		for _, item := range menu {
+			if providerErr != nil && page == "Series" && (item.page == downloadQueue || (len(item.args) > 1 && item.args[1] != "transcode")) {
+				item.label += " (disabled)"
+				item.args = []string{"diagnostics"}
+				item.prompt = ""
+				item.page = ""
+				item.confirm = false
+			}
 			if state, ok := status.Services[item.label]; ok && state != "connected" {
 				item.label += " (disabled)"
 				item.page = ""
@@ -305,7 +378,7 @@ func runTerminal(ctx context.Context) error {
 			selection = max(0, len(available)-1)
 		}
 		width, height := terminalDimensions()
-		frame := []string{fmt.Sprintf("Stream Forge  |  %s  |  Emby %s  |  Dispatcharr %s", status.Runtime, strings.Fields(status.Services["Emby"])[0], strings.Fields(status.Services["Dispatcharr"])[0]), "", page, ""}
+		frame := []string{fmt.Sprintf("Stream Forge  |  %s  |  %s", status.Runtime, status.Encoder), fmt.Sprintf("Emby %s  |  Dispatcharr %s", strings.Fields(status.Services["Emby"])[0], strings.Fields(status.Services["Dispatcharr"])[0]), browser.heading(page), ""}
 		footer := "↑↓ Navigate   Enter Select   Esc Back   Ctrl+C Exit"
 		switch mode {
 		case "menu":
@@ -322,20 +395,44 @@ func runTerminal(ctx context.Context) error {
 				frame = append(frame, marker+item.label)
 			}
 		case "input":
-			frame = append(frame, choice.label, "", choice.prompt, input)
+			shown := input
+			if choice.secret {
+				shown = strings.Repeat("•", utf8.RuneCountInString(input))
+			}
+			frame = append(frame, choice.label, "", choice.prompt, shown)
 			footer = "Enter Continue   Esc Back   Ctrl+C Exit"
 		case "confirm":
-			frame = append(frame, "Apply "+choice.label+"?", "", strings.Join(choice.args, " "), "", "No (Enter)   Yes (Y)")
+			frame = append(frame, "Apply "+choice.label+"?", "No (Enter)   Yes (Y)", "")
+			lines := strings.Split(strings.TrimSpace(result), "\n")
+			slots := max(1, height-len(frame)-1)
+			scroll = min(scroll, max(0, len(lines)-slots))
+			frame = append(frame, lines[scroll:min(len(lines), scroll+slots)]...)
 			footer = "Y Confirm   Enter / Esc Cancel   Ctrl+C Exit"
 		case "running":
 			frame = append(frame, choice.label, "", fmt.Sprintf("Running for %s", time.Since(started).Truncate(time.Second)))
 			footer = "Esc Cancel operation   Ctrl+C Exit"
+			state := progress.snapshot()
+			if state.total > 0 {
+				done := state.done + state.failed + state.skipped + state.cancelled
+				frame = append(frame, fmt.Sprintf("%d%% · %d/%d · %d failed · %d skipped · %d cancelled", 100*done/state.total, done, state.total, state.failed, state.skipped, state.cancelled))
+			}
+			if state.note != "" {
+				frame = append(frame, state.note)
+			}
+			if len(state.active) > 0 {
+				activeSelection = min(activeSelection, len(state.active)-1)
+				frame = append(frame, "› "+state.active[activeSelection])
+				footer = "↑↓ Active downloads  X Cancel selected  Esc Cancel all"
+			}
 		case "result", "startup":
 			lines := strings.Split(strings.TrimSpace(result), "\n")
 			slots := max(1, height-len(frame)-2)
 			scroll = min(scroll, max(0, len(lines)-slots))
 			frame = append(frame, lines[scroll:min(len(lines), scroll+slots)]...)
 			footer = "↑↓ Scroll   Enter Return   Ctrl+C Exit"
+			if len(discovered.groups) > 0 || len(discovered.episodes) > 0 {
+				footer = "B Browse   ↑↓ Scroll   Enter Return"
+			}
 			if mode == "startup" {
 				footer = "Enter Continue   Esc Quit"
 			}
@@ -351,10 +448,17 @@ func runTerminal(ctx context.Context) error {
 		case <-redraw.C:
 		case completion := <-finished:
 			result = completion.text
+			if completion.clipboard != "" {
+				fmt.Fprintf(os.Stdout, "\x1b]52;c;%s\a", completion.clipboard)
+			}
+			discovered = completion.discovery
 			if completion.status != nil {
 				status = *completion.status
 			}
 			mode, scroll = "result", 0
+			if completion.preview && !completion.failed {
+				mode = "confirm"
+			}
 		case key, ok := <-keys:
 			if !ok {
 				if mode == "running" {
@@ -369,15 +473,15 @@ func runTerminal(ctx context.Context) error {
 					return nil
 				}
 				if key == "enter" {
-					navigate("Main")
+					navigate(page)
 				}
 			case "menu":
 				switch {
 				case key == "escape":
 					if filter != "" {
 						filter, selection = "", 0
-					} else if page != "Main" {
-						navigate("Main")
+					} else if page != "Main" && page != sessionSettings {
+						navigate(terminalPrevious(page))
 					}
 				case key == "up":
 					selection = max(0, selection-1)
@@ -390,18 +494,32 @@ func runTerminal(ctx context.Context) error {
 				case key == "enter" && len(available) > 0:
 					choice = available[selection]
 					switch {
+					case choice.mark == "accept-settings":
+						navigate("Main")
+						if len(values) > 0 {
+							choice = terminalChoice{label: "Retry Connections"}
+							arguments = []string{"diagnostics"}
+							launch(false)
+						}
+					case choice.mark != "":
+						arguments = browser.mark(choice)
+						if len(arguments) != 0 {
+							launch(true)
+						}
 					case choice.page != "":
 						navigate(choice.page)
+					case choice.setting != "":
+						mode, input = "input", ""
 					case choice.args == nil:
 						return nil
 					case choice.prompt != "":
 						mode, input = "input", ""
 					default:
 						arguments = slices.Clone(choice.args)
-						if choice.confirm {
-							mode = "confirm"
+						if choice.confirm && startupValue("STREAMFORGE_CONFIRM", "true") != "false" {
+							launch(true)
 						} else {
-							launch()
+							launch(false)
 						}
 					}
 				}
@@ -415,19 +533,38 @@ func runTerminal(ctx context.Context) error {
 					input += strings.TrimPrefix(key, "text:")
 				case key == "enter":
 					var err error
+					if choice.setting != "" {
+						value := strings.TrimSpace(input)
+						if choice.secret {
+							value = input
+						}
+						if checkTerminalSetting(choice.setting, value) {
+							values[choice.setting] = value
+							input = ""
+							mode = "menu"
+						} else {
+							mode, result, scroll = "result", "Invalid setting value", 0
+						}
+						break
+					}
 					arguments, err = terminalArgs(choice, input)
 					if err != nil {
 						mode, result, scroll = "result", err.Error(), 0
-					} else if choice.confirm {
-						mode = "confirm"
+					} else if choice.confirm && startupValue("STREAMFORGE_CONFIRM", "true") != "false" {
+						launch(true)
 					} else {
-						launch()
+						launch(false)
 					}
 				}
 			case "confirm":
+				if key == "up" {
+					scroll = max(0, scroll-1)
+				} else if key == "down" {
+					scroll++
+				}
 				if key == "text:y" || key == "text:Y" {
 					arguments = append(arguments, "--yes")
-					launch()
+					launch(false)
 				} else if key == "enter" || key == "escape" {
 					mode = "menu"
 				}
@@ -437,6 +574,10 @@ func runTerminal(ctx context.Context) error {
 				}
 			case "result":
 				switch key {
+				case "text:b", "text:B":
+					if destination := browser.browse(discovered); destination != "" {
+						navigate(destination)
+					}
 				case "enter":
 					mode = "menu"
 				case "down":
@@ -488,4 +629,13 @@ func drawTerminal(out io.Writer, width, height int, lines []string, footer strin
 func shorten(input string) string {
 	_, size := utf8.DecodeLastRuneInString(input)
 	return input[:len(input)-size]
+}
+
+func supportsClipboard() bool {
+	switch os.Getenv("TERM_PROGRAM") {
+	case "iTerm.app", "WezTerm", "kitty":
+		return true
+	default:
+		return false
+	}
 }

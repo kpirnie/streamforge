@@ -40,6 +40,8 @@ type SearchGroup struct {
 
 // Episode identifies a downloadable provider item and its legacy output name.
 type Episode struct {
+	SizeBytes uint64
+	SeriesID  string
 	ID        string
 	Name      string
 	Extension string
@@ -253,7 +255,11 @@ func (p *Providers) Episodes(ctx context.Context, providerName, seriesID string)
 				continue
 			}
 			name := fmt.Sprintf("%s - S%02dE%02d", filenameTitle, season, episode)
-			episodes = append(episodes, Episode{ID: string(record.ID), Name: name, Extension: extension, Season: season, Number: episode})
+			size, _ := strconv.ParseUint(string(record.Size), 10, 64)
+			if size == 0 {
+				size, _ = strconv.ParseUint(string(record.Info.Size), 10, 64)
+			}
+			episodes = append(episodes, Episode{SizeBytes: size, SeriesID: seriesID, ID: string(record.ID), Name: name, Extension: extension, Season: season, Number: episode})
 		}
 	}
 	slices.SortStableFunc(episodes, func(a, b Episode) int {
@@ -266,6 +272,10 @@ func (p *Providers) Episodes(ctx context.Context, providerName, seriesID string)
 }
 
 type episodeRecord struct {
+	Size scalar `json:"filesize"`
+	Info struct {
+		Size scalar `json:"filesize"`
+	} `json:"info"`
 	ID        scalar `json:"id"`
 	Season    scalar `json:"season"`
 	Episode   scalar `json:"episode_num"`

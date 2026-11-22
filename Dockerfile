@@ -1,10 +1,11 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
+ARG BUILD_REVISION=unknown
 WORKDIR /src
 COPY go.mod *.go ./
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /streamforge .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-X main.buildRevision=$BUILD_REVISION -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o /streamforge .
 
 FROM alpine:3.23
 ARG PUID=1000

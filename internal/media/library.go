@@ -160,6 +160,9 @@ func AtomicWrite(ctx context.Context, root *os.Root, destination string, mode fs
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if replace {
 		return root.Rename(temp, destination)
 	}

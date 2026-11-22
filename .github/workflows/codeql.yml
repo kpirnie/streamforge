@@ -2,44 +2,36 @@ name: CodeQL
 
 on:
   push:
-    branches: ["main", "develop"]
+    branches: [main, develop]
   pull_request:
-    branches: ["main", "develop"]
+    branches: [main, develop]
   schedule:
     - cron: "27 4 * * 1"
   workflow_dispatch:
 
 jobs:
   analyze:
-    name: Analyze (${{ matrix.language }})
+    name: Analyze Go
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       packages: read
       actions: read
       contents: read
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - language: go
-            build-mode: autobuild
-          - language: javascript-typescript
-            build-mode: none
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          languages: go
+          build-mode: manual
           config-file: ./.github/codeql/codeql-config.yml
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+      - run: CGO_ENABLED=0 go build ./...
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:${{ matrix.language }}"
+          category: /language:go

@@ -11,17 +11,36 @@ import (
 	"io"
 	"strings"
 
+	"github.com/kpirnie/streamforge/internal/media"
 	"github.com/kpirnie/streamforge/internal/xtream"
 )
 
-type seriesCommand struct {
-	action      string
+type cachedProviders struct {
+	titles    *media.Titles
+	providers *xtream.Providers
+	err       error
+}
+type seriesDiscovery struct {
+	groups   []xtream.SearchGroup
+	episodes []xtream.Episode
+	provider string
+	title    string
+	seriesID string
+}
+
+type seriesSelection struct {
 	provider    string
 	argument    string
 	episodes    []string
 	allEpisodes bool
-	redownload  bool
-	process     bool
+}
+
+type seriesCommand struct {
+	seriesSelection
+	action     string
+	redownload bool
+	process    bool
+	selections []seriesSelection
 }
 
 func parseSeries(args []string) (seriesCommand, error) {
@@ -45,6 +64,12 @@ func parseSeries(args []string) (seriesCommand, error) {
 				return command, errors.New("specify a single provider")
 			}
 			command.provider = strings.TrimPrefix(arg, "--provider=")
+		case strings.HasPrefix(arg, "--select="):
+			pick, err := parseSelection(strings.TrimPrefix(arg, "--select="))
+			if err != nil {
+				return command, err
+			}
+			command.selections = append(command.selections, pick)
 		case arg == "--all-episodes":
 			command.allEpisodes = true
 		case arg == "--process":
@@ -59,7 +84,7 @@ func parseSeries(args []string) (seriesCommand, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	if command.action != "download" && (command.allEpisodes || command.redownload || command.process || len(command.episodes) > 0) {
+	if command.action != "download" && (command.allEpisodes || command.redownload || command.process || len(command.episodes) > 0 || len(command.selections) > 0) {
 		return command, errors.New("episode selection flags apply to series download")
 	}
 	switch command.action {
@@ -69,10 +94,17 @@ func parseSeries(args []string) (seriesCommand, error) {
 			return command, errors.New("series search requires a title")
 		}
 	case "download":
+		if len(command.selections) > 0 {
+			if command.provider != "" || len(positionals) != 0 || command.allEpisodes || len(command.episodes) > 0 {
+				return command, errors.New("use --select entries or a single provider selection")
+			}
+			return command, nil
+		}
 		if command.provider == "" || len(positionals) != 1 || command.allEpisodes == (len(command.episodes) > 0) {
 			return command, errors.New("series download requires a provider, a series ID, and --all-episodes or --episode=ID")
 		}
 		command.argument = positionals[0]
+		command.selections = []seriesSelection{command.seriesSelection}
 	case "episodes":
 		if command.provider == "" || len(positionals) != 1 {
 			return command, errors.New("series episodes requires --provider and a series ID")
@@ -84,11 +116,31 @@ func parseSeries(args []string) (seriesCommand, error) {
 	return command, nil
 }
 
-func runSeries(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any)) error {
+func parseSelection(raw string) (seriesSelection, error) {
+	parts := strings.Split(raw, "|")
+	if len(parts) != 3 {
+		return seriesSelection{}, errors.New("selection requires Provider|Series ID|Episode IDs or all")
+	}
+	selection := seriesSelection{provider: strings.TrimSpace(parts[0]), argument: strings.TrimSpace(parts[1]), allEpisodes: strings.EqualFold(strings.TrimSpace(parts[2]), "all")}
+	if selection.provider == "" || selection.argument == "" || strings.TrimSpace(parts[2]) == "" {
+		return seriesSelection{}, errors.New("selection contains a missing value")
+	}
+	if !selection.allEpisodes {
+		for _, id := range strings.Split(parts[2], ",") {
+			selection.episodes = append(selection.episodes, strings.TrimSpace(id))
+		}
+	}
+	return selection, nil
+}
+
+func runSeries(ctx context.Context, providers *xtream.Providers, command seriesCommand, out io.Writer, warn func(string, ...any), discovery *seriesDiscovery) error {
 	if command.action == "episodes" {
 		title, episodes, skipped, err := providers.Episodes(ctx, command.provider, command.argument)
 		if err != nil {
 			return err
+		}
+		if discovery != nil {
+			*discovery = seriesDiscovery{episodes: episodes, provider: command.provider, title: title, seriesID: command.argument}
 		}
 		fmt.Fprintf(out, "%s [%s]\n", title, command.provider)
 		for _, episode := range episodes {
@@ -105,6 +157,9 @@ func runSeries(ctx context.Context, providers *xtream.Providers, command seriesC
 	groups, err := providers.Search(ctx, command.argument, command.provider)
 	if err != nil {
 		return err
+	}
+	if discovery != nil {
+		discovery.groups = groups
 	}
 	failed := 0
 	for _, group := range groups {

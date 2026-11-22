@@ -42,13 +42,20 @@ func run(ctx context.Context, args []string) error {
 	if len(args) == 0 && terminalAvailable(os.Stdin) && terminalAvailable(os.Stdout) {
 		return runTerminal(ctx)
 	}
-	return runCommand(ctx, args, nil, os.Stdout, os.Stderr)
+	return runCommand(ctx, args, nil, os.Stdout, os.Stderr, nil, nil, nil, nil)
 }
 
-func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr io.Writer) (runErr error) {
+func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr io.Writer, discovery *seriesDiscovery, progress *operationProgress, sessionValues map[string]string, providerCache *cachedProviders) (runErr error) {
 	var command []string
+	overrides := make(map[string]string)
 	var dryRun, verbose, yes, help bool
 	for _, arg := range args {
+		if key, option, ok := strings.Cut(arg, "="); ok {
+			if setting, exists := globalOptions[key]; exists {
+				overrides[setting] = option
+				continue
+			}
+		}
 		switch arg {
 		case "--help", "-h":
 			help = true
@@ -94,7 +101,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			}
 			logs = file
 		}
-		return runDiagnostics(ctx, command[1:], out, logs, dryRun)
+		return runDiagnostics(ctx, command[1:], out, logs, dryRun, sessionValues)
 	}
 	if len(command) < 2 {
 		return errors.New("unknown command. Run streamforge --help")
@@ -161,14 +168,17 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 	if err != nil {
 		return err
 	}
+	for _, warning := range unknownSettings(settings) {
+		message("WARN", stderr, "%s", warning)
+	}
 	value := func(key, fallback string) string {
-		if v, ok := os.LookupEnv(key); ok {
-			return v
+		if option, ok := overrides[key]; ok {
+			return option
 		}
-		if v, ok := settings[key]; ok {
-			return v
-		}
-		return fallback
+		return sessionValue(key, fallback, settings, sessionValues)
+	}
+	if strings.ContainsAny(value("STREAMFORGE_USER_AGENT", ""), "\r\n") {
+		return errors.New("STREAMFORGE_USER_AGENT must be one line")
 	}
 	var findings []error
 	timeout, err := time.ParseDuration(value("STREAMFORGE_TIMEOUT", "30s"))
@@ -219,7 +229,10 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 	transport := makeTransport(timeout, verifyTLS)
 	defer transport.CloseIdleConnections()
 	agent := value("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20")
-	report := func(format string, args ...any) { message("INFO", out, format, args...) }
+	report := func(format string, args ...any) {
+		progress.status(fmt.Sprintf(format, args...))
+		message("INFO", out, format, args...)
+	}
 	parent := value("STREAMFORGE_PLAYBACK_PARENT", "")
 	if !dryRun && (service == "strm" || service == "movies" || (service == "series" && (action == "download" || action == "transcode")) || (service == "dispatcharr" && action == "export")) {
 		if root, err := os.OpenRoot(workDir); err == nil {
@@ -231,24 +244,34 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 		}
 	}
 	titles := media.NewTitles(value("TMDB_API_KEY", ""), agent, timeout, transport, func(format string, args ...any) { message("WARN", stderr, format, args...) })
+	if providerCache != nil {
+		titles = providerCache.titles
+	}
 	if (service == "movies" || service == "series") && action == "transcode" {
-		return runTranscode(ctx, command[2:], nil, titles, value, dryRun, yes || !confirm, report)
+		return runTranscode(ctx, command[2:], nil, titles, value, dryRun, yes || !confirm, report, progress)
 	}
 	if service == "strm" {
 		return runSTRM(ctx, command[1:], parent, value("STREAMFORGE_EXCLUDE", ""), titles, dryRun, report)
 	}
 	if service == "series" {
-		providers, warnings, err := xtream.LoadProviders("/config/providers.json", agent, timeout, transport)
-		for _, warning := range warnings {
-			message("WARN", stderr, "%s", warning)
+		var providers *xtream.Providers
+		var err error
+		if providerCache != nil {
+			providers, err = providerCache.providers, providerCache.err
+		} else {
+			var warnings []error
+			providers, warnings, err = xtream.LoadProviders("/config/providers.json", agent, timeout, transport)
+			for _, warning := range warnings {
+				message("WARN", stderr, "%s", warning)
+			}
 		}
 		if err != nil {
 			return err
 		}
 		if series.action == "download" {
-			return runDownload(ctx, providers, series, parent, titles, value, dryRun, yes || !confirm, report)
+			return runDownload(ctx, providers, series, parent, titles, value, dryRun, yes || !confirm, report, progress)
 		}
-		return runSeries(ctx, providers, series, out, func(format string, args ...any) { message("WARN", stderr, format, args...) })
+		return runSeries(ctx, providers, series, out, func(format string, args ...any) { message("WARN", stderr, format, args...) }, discovery)
 	}
 	if service == "emby" {
 		client, err := emby.Connect(ctx, embyHost, embyKey, agent, timeout, transport)
@@ -277,7 +300,15 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			message("WARN", stderr, "Skipped prune after refresh request failed")
 			continue
 		}
-		err := runDispatcharr(ctx, client, step, start, normalizer, dryRun, report)
+		var err error
+		if action == "all" && step == "refresh" && !dryRun {
+			err = client.RefreshAndWait(ctx, func() { report("Requested Dispatcharr M3U refresh; waiting for active accounts") })
+			if err == nil {
+				report("Dispatcharr M3U refresh complete")
+			}
+		} else {
+			err = runDispatcharr(ctx, client, step, start, normalizer, dryRun, report)
+		}
 		if err != nil {
 			refreshFailed = step == "refresh"
 			failures = append(failures, fmt.Errorf("%s: %w", step, err))

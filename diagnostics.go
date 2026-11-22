@@ -27,6 +27,9 @@ import (
 	"github.com/kpirnie/streamforge/internal/media"
 )
 
+var buildRevision string
+var buildDate string
+
 type statusReport struct {
 	Version      string            `json:"version"`
 	Commit       string            `json:"commit"`
@@ -38,6 +41,9 @@ type statusReport struct {
 	Mounts       map[string]string `json:"mounts"`
 	Services     map[string]string `json:"services"`
 	Findings     []string          `json:"findings"`
+	Warnings     []string          `json:"warnings"`
+	Encoder      string            `json:"encoder"`
+	Capabilities map[string]bool   `json:"capabilities"`
 	Session      []string          `json:"session_log"`
 }
 
@@ -51,7 +57,7 @@ func runtimeName() string {
 	return "Linux"
 }
 
-func diagnosticStatus(ctx context.Context, logFile *os.File) statusReport {
+func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]string) statusReport {
 	report := statusReport{Version: "development", Commit: "unknown", Built: "unknown", Platform: runtime.GOOS + "/" + runtime.GOARCH, Runtime: runtimeName(),
 		Dependencies: make(map[string]string), Devices: make(map[string]bool), Mounts: make(map[string]string), Services: make(map[string]string),
 		Findings: []string{}, Session: []string{}}
@@ -68,19 +74,18 @@ func diagnosticStatus(ctx context.Context, logFile *os.File) statusReport {
 			}
 		}
 	}
+	if buildRevision != "" && buildRevision != "unknown" {
+		report.Commit = buildRevision
+	}
+	if buildDate != "" {
+		report.Built = buildDate
+	}
 	env, err := readEnvironment()
+	report.Warnings = unknownSettings(env)
 	if err != nil {
 		report.Findings = append(report.Findings, "Configuration could not be read or contains invalid entries")
 	}
-	value := func(key, fallback string) string {
-		if value, ok := os.LookupEnv(key); ok {
-			return value
-		}
-		if value, ok := env[key]; ok {
-			return value
-		}
-		return fallback
-	}
+	value := func(key, fallback string) string { return sessionValue(key, fallback, env, session) }
 	for _, device := range []string{"/dev/nvidiactl", "/dev/dri/renderD128"} {
 		file, err := os.OpenFile(device, os.O_RDWR, 0)
 		report.Devices[device] = err == nil
@@ -108,6 +113,42 @@ func diagnosticStatus(ctx context.Context, logFile *os.File) statusReport {
 		fields := strings.Fields(string(data))
 		if err == nil && len(fields) >= 3 && fields[0] == tool && fields[1] == "version" {
 			report.Dependencies[tool] = fields[2]
+		}
+	}
+	report.Encoder = "unavailable"
+	report.Capabilities = make(map[string]bool)
+	if report.Dependencies["ffmpeg"] != "unavailable" {
+		binary := value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg")
+		probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+		encoders, _ := exec.CommandContext(probe, binary, "-hide_banner", "-encoders").Output()
+		cancel()
+		probe, cancel = context.WithTimeout(ctx, 3*time.Second)
+		filters, _ := exec.CommandContext(probe, binary, "-hide_banner", "-filters").Output()
+		cancel()
+		for _, name := range []string{"libx264", "libx265", "libsvtav1", "hevc_nvenc", "hevc_qsv", "hevc_vaapi"} {
+			report.Capabilities[name] = strings.Contains(string(encoders), " "+name+" ")
+		}
+		for _, name := range []string{"zscale", "tonemap"} {
+			report.Capabilities[name] = strings.Contains(string(filters), " "+name+" ")
+		}
+		report.Encoder = "CPU"
+		switch value("STREAMFORGE_HARDWARE", "auto") {
+		case "auto", "nvidia":
+			if report.Devices["/dev/nvidiactl"] && report.Capabilities["hevc_nvenc"] {
+				report.Encoder = "NVIDIA"
+			}
+		}
+		if report.Encoder == "CPU" && report.Devices["/dev/dri/renderD128"] {
+			switch profile := value("STREAMFORGE_HARDWARE", "auto"); profile {
+			case "auto", "intel":
+				if report.Capabilities["hevc_qsv"] {
+					report.Encoder = "Intel"
+				}
+			case "amd":
+				if report.Capabilities["hevc_vaapi"] {
+					report.Encoder = "AMD"
+				}
+			}
 		}
 	}
 	report.Services, report.Findings = serviceStatus(ctx, value, report.Findings)
@@ -201,7 +242,7 @@ func serviceStatus(ctx context.Context, value func(string, string) string, findi
 	return services, findings
 }
 
-func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *os.File, dryRun bool) error {
+func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *os.File, dryRun bool, session map[string]string) error {
 	asJSON, save := false, false
 	for _, arg := range args {
 		switch arg {
@@ -213,7 +254,7 @@ func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *
 			return errors.New("usage: streamforge diagnostics [--json] [--save]")
 		}
 	}
-	report := diagnosticStatus(ctx, logFile)
+	report := diagnosticStatus(ctx, logFile, session)
 	var data []byte
 	extension := ".txt"
 	if asJSON {
@@ -227,6 +268,7 @@ func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *
 	} else {
 		var text strings.Builder
 		fmt.Fprintf(&text, "Stream Forge %s (%s)\nBuild date: %s\nRuntime: %s (%s)\n", report.Version, report.Commit, report.Built, report.Runtime, report.Platform)
+		fmt.Fprintf(&text, "Encoder: %s\n", report.Encoder)
 		for _, name := range []string{"ffmpeg", "ffprobe"} {
 			fmt.Fprintf(&text, "%s: %s\n", name, report.Dependencies[name])
 		}
@@ -238,6 +280,9 @@ func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *
 		}
 		for _, name := range []string{"/config", "/working", "/working/input", "/working/output"} {
 			fmt.Fprintf(&text, "%s: %s\n", name, report.Mounts[name])
+		}
+		for _, warning := range report.Warnings {
+			fmt.Fprintln(&text, warning)
 		}
 		for _, finding := range report.Findings {
 			fmt.Fprintln(&text, finding)

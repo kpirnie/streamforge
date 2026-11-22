@@ -23,7 +23,7 @@ Set `DISP_URL`, `DISP_USER` and `DISP_PASS` in the process environment or in a r
 
 Use `--dry-run` to preview an action and `--yes` to authorize changes. Use `--verbose` for debug logs. Export overwrites its CSV automatically.
 
-Dispatcharr queues the refresh asynchronously. The later steps of `all` use the data available when they run. A dry run previews each step against the current data.
+The standalone refresh queues the job. `all` waits for active accounts that expose refresh status before continuing. A dry run previews each step against the current data.
 
 | Optional environment variable | Default |
 | --- | --- |
@@ -65,6 +65,7 @@ Create `working/input` and `working/output`. Set `STREAMFORGE_PLAYBACK_PARENT` t
 ```sh
 streamforge series download --provider "Example Provider" 123 --episode=456
 streamforge series download --provider "Example Provider" 123 --all-episodes --process
+streamforge series download --select="Example Provider|123|all" --select="Other Provider|987|321,322"
 streamforge movies transcode movies --codec=hevc --container=mkv
 streamforge series transcode shows --convert-hdr
 streamforge strm input/shows --playback-parent=/library
@@ -78,7 +79,9 @@ Media commands use host-mounted FFmpeg and FFprobe. The default paths are `/usr/
 
 ## Interactive and scheduled use
 
-Use `docker compose run --rm streamforge` to open the terminal interface. Arrow keys move, typing filters the current list, Enter selects, and Esc returns or cancels an active operation. Ctrl+C exits. Completed operations retain their results until Enter returns to the menu. For SSH, allocate a terminal with `ssh -t` when opening the TUI.
+Use `docker compose run --rm streamforge` to open the terminal interface. Choose Continue with Defaults or enter session settings. Arrow keys move, typing filters the current list, Enter selects, and Esc returns or cancels an active operation. Ctrl+C exits. Completed operations retain their results until Enter returns to the menu. For SSH, allocate a terminal with `ssh -t` when opening the TUI.
+
+For series, search providers, press B to browse results, choose a series, and press B to select its episodes. Selections from different providers accumulate in the Download queue. During a download, X cancels the selected active transfer, and Esc cancels the batch.
 
 For cron, pass the command explicitly and omit interactive options. For example, with the paths mounted by the supplied Compose file:
 

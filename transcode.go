@@ -14,12 +14,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/kpirnie/streamforge/internal/media"
 )
 
-func runTranscode(ctx context.Context, args []string, requested []string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any)) error {
+func runTranscode(ctx context.Context, args []string, requested []string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress) error {
 	profile := media.Conversion{
 		FFmpeg:    value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg"),
 		FFprobe:   value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe"),
@@ -126,11 +125,10 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 		seen[output] = true
 		queue = append(queue, job{input, output, muxer, info})
 	}
-	var disk syscall.Statfs_t
-	if err := syscall.Statfs(media.Working, &disk); err != nil {
-		return errors.New("could not check output disk space")
+	available, err := media.DestinationSpace(root, "output", false)
+	if err != nil {
+		return err
 	}
-	available := disk.Bavail * uint64(disk.Bsize)
 	report("Estimated source size %d bytes, %d bytes available", estimate, available)
 	if dryRun {
 		report("Would consider %d files for transcoding", len(queue))
@@ -147,6 +145,7 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 		return err
 	}
 	var mu sync.Mutex
+	progress.setTotal(len(queue))
 	var failures, postFailures []error
 	var done, skipped, cancelled, retries int
 	workers := make(chan struct{}, parallel)
@@ -161,6 +160,8 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 		workers <- struct{}{}
 		wait.Go(func() {
 			defer func() { <-workers }()
+			progress.status(fmt.Sprintf("Processing media item %d", index+1))
+			_, finish := progress.begin(ctx, "")
 			encoder, skip, attempts, err := profile.Convert(ctx, root, item.input, item.output, item.muxer, encoders)
 			var companionErr, deleteErr error
 			if err == nil && skip && fromDownload && parent != "" {
@@ -191,15 +192,19 @@ func runTranscode(ctx context.Context, args []string, requested []string, titles
 			switch {
 			case err != nil && ctx.Err() != nil:
 				cancelled++
+				finish("cancelled")
 			case err != nil:
 				failures = append(failures, fmt.Errorf("media item %d: %w", index+1, err))
+				finish("failed")
 			case skip:
 				if companionErr != nil {
 					postFailures = append(postFailures, fmt.Errorf("media item %d companion: %w", index+1, companionErr))
 				}
 				skipped++
+				finish("skipped")
 			default:
 				done++
+				finish("done")
 				report("Transcoded media item %d with %s", index+1, encoder)
 				if companionErr != nil {
 					postFailures = append(postFailures, fmt.Errorf("media item %d companion: %w", index+1, companionErr))

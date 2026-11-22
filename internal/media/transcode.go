@@ -174,6 +174,12 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 			}
 			_, err := Probe(ctx, c.FFprobe, output)
 			if err == nil {
+				if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+					ownershipErr := output.Chown(int(stat.Uid), int(stat.Gid))
+					if ownershipErr != nil && !errors.Is(ownershipErr, syscall.EPERM) {
+						return ownershipErr
+					}
+				}
 				err = output.Chmod(info.Mode().Perm())
 				if err == nil {
 					attrErr := syscall.Setxattr(descriptor(output), sourceAttribute, []byte(fingerprint(input)), 0)
