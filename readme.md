@@ -1,4 +1,4 @@
-# Stream Forge
+<h1><img src="docs/assets/streamforge-logo.png" alt="" width="100" height="100" align="middle"> Stream Forge</h1>
 
 ## Badges
 
