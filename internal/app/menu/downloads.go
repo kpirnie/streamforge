@@ -48,9 +48,9 @@ func (s *Browser) Choices(page string) []Choice {
 		return choices
 	}
 	return append(slices.Clone(choices),
-		Choice{Label: "Back to Previous", Page: s.Previous(page)},
-		Choice{Label: "Back to Main", Page: "Main"},
-		Choice{Label: "Exit"},
+		Choice{Label: " - Back to Previous", Page: s.Previous(page)},
+		Choice{Label: " - Back to Main", Page: "Main"},
+		Choice{Label: " - Exit"},
 	)
 }
 
