@@ -47,6 +47,17 @@ Set `EMBY_HOST` to the Emby server URL and `EMBY_API_KEY` to its API key. For `l
 
 Use `--dry-run` to preview or `--yes` to apply changes.
 
+## Xtream series discovery
+
+Copy `providers.json.example` to the host config directory as `providers.json` and fill in the provider details. Search runs against all valid providers by default and lists exact title matches first within each provider. Use `--provider NAME` to filter the search.
+
+```sh
+streamforge series search "Example Series"
+streamforge series episodes --provider "Example Provider" 123
+```
+
+Provider priority sorts from low to high. Provider headers can override the global user agent. The configuration also accepts download settings `concurrent`, `retries`, `retry_delay` as a duration, and aggregate `bandwidth_kbps` in KB/s, with 0 for unlimited. Provider downloads are pending.
+
 ## Container
 
 Mount an existing config directory and a writable working directory. The image runs with UID and GID 1000 by default. Use the `PUID` and `PGID` build arguments or the runtime's `--user` option to select an identity with access to those mounts.

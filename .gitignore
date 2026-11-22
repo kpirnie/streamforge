@@ -110,3 +110,6 @@ settings/
 
 # Generated assets that should not be committed
 # static/{{GENERATED_ASSET}}
+
+# Local Xtream provider configuration
+providers.json

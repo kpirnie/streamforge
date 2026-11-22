@@ -23,6 +23,7 @@ import (
 
 	"github.com/kpirnie/streamforge/internal/dispatcharr"
 	"github.com/kpirnie/streamforge/internal/emby"
+	"github.com/kpirnie/streamforge/internal/xtream"
 )
 
 const workDir = "/working"
@@ -53,19 +54,27 @@ func run(ctx context.Context, args []string) (runErr error) {
 			command = append(command, arg)
 		}
 	}
-	if help || len(command) == 0 || (len(command) == 1 && (command[0] == "dispatcharr" || command[0] == "emby")) {
+	if help || len(command) == 0 || (len(command) == 1 && (command[0] == "dispatcharr" || command[0] == "emby" || command[0] == "series")) {
 		if len(command) == 0 || command[0] == "dispatcharr" {
 			fmt.Println("Usage: streamforge dispatcharr <export|refresh|create-update|prune|match|renumber|reorder|clear-epg|all> [--dry-run] [--yes] [--verbose]")
 		}
 		if len(command) == 0 || command[0] == "emby" {
 			fmt.Println("Usage: streamforge emby <refresh|logos|numbers|all> [--dry-run] [--yes] [--verbose]")
 		}
+		if len(command) == 0 || command[0] == "series" {
+			fmt.Println("Usage: streamforge series search [--provider NAME] TITLE")
+			fmt.Println("       streamforge series episodes --provider NAME SERIES_ID")
+		}
 		return nil
 	}
-	if len(command) != 2 {
+	if len(command) < 2 {
 		return errors.New("unknown command. Run streamforge --help")
 	}
 	service, action := command[0], command[1]
+	var series seriesCommand
+	if service != "series" && len(command) != 2 {
+		return errors.New("unexpected command arguments. Run streamforge --help")
+	}
 	switch service {
 	case "dispatcharr":
 		switch action {
@@ -73,6 +82,12 @@ func run(ctx context.Context, args []string) (runErr error) {
 		default:
 			return errors.New("unknown Dispatcharr command. Run streamforge dispatcharr --help")
 		}
+	case "series":
+		parsed, err := parseSeries(command[1:])
+		if err != nil {
+			return err
+		}
+		series = parsed
 	case "emby":
 		switch action {
 		case "refresh", "logos", "numbers", "all":
@@ -155,7 +170,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 	if err := errors.Join(findings...); err != nil {
 		return err
 	}
-	if confirm && !dryRun && !yes && action != "export" {
+	if service != "series" && confirm && !dryRun && !yes && action != "export" {
 		return errors.New("confirm changes with --yes, or preview with --dry-run")
 	}
 	if !verifyTLS {
@@ -170,6 +185,16 @@ func run(ctx context.Context, args []string) (runErr error) {
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !verifyTLS}
 	agent := value("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20")
 	report := func(format string, args ...any) { message("INFO", os.Stdout, format, args...) }
+	if service == "series" {
+		providers, warnings, err := xtream.LoadProviders("/config/providers.json", agent, timeout, transport)
+		for _, warning := range warnings {
+			message("WARN", os.Stderr, "%s", warning)
+		}
+		if err != nil {
+			return err
+		}
+		return runSeries(ctx, providers, series, os.Stdout, func(format string, args ...any) { message("WARN", os.Stderr, format, args...) })
+	}
 	if service == "emby" {
 		client, err := emby.Connect(ctx, embyHost, embyKey, agent, timeout, transport)
 		if err != nil {

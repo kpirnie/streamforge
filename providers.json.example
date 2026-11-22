@@ -1,0 +1,15 @@
+{
+  "Example Provider": {
+    "url": "https://provider.example",
+    "username": "your-username",
+    "password": "your-password",
+    "priority": 10,
+    "concurrent": 1,
+    "retries": 2,
+    "retry_delay": "1s",
+    "bandwidth_kbps": 0,
+    "headers": {
+      "User-Agent": "VLC/3.0.20 LibVLC/3.0.20"
+    }
+  }
+}

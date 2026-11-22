@@ -5,6 +5,7 @@
 .dockerignore
 
 # Environment files
+providers.json
 .env
 .env.*
 
