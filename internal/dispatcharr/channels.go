@@ -1,0 +1,177 @@
+// Stream Forge - Terminal media administration
+// Copyright (c) 2026 Kevin Pirnie <iam@kevinpirnie.com>
+// Licensed under the MIT License. See LICENSE file in the project root for full license text.
+
+package dispatcharr
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/csv"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"slices"
+	"strings"
+)
+
+type channel struct {
+	ID      int    `json:"id"`
+	Name    string `json:"name"`
+	TVGID   string `json:"tvg_id"`
+	EPGID   int    `json:"epg_data_id"`
+	Streams []struct {
+		ID      int `json:"id"`
+		Account int `json:"m3u_account"`
+	} `json:"streams"`
+}
+
+type update struct {
+	id     int
+	fields map[string]any
+}
+
+// Export fetches every channel and atomically publishes channels.csv.
+func (c *Client) Export(ctx context.Context, root *os.Root, dryRun bool) (int, error) {
+	channels, err := list[channel](ctx, c, channelsPath, nil)
+	if err != nil {
+		return 0, err
+	}
+	if dryRun {
+		return len(channels), nil
+	}
+	alphabetical(channels)
+	tempName := ".streamforge-export-" + rand.Text()
+	file, err := root.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+	if err != nil {
+		return 0, err
+	}
+	defer root.Remove(tempName)
+	writer := csv.NewWriter(file)
+	err = writer.Write([]string{"Channel Name", "TVG ID"})
+	for _, record := range channels {
+		if err != nil {
+			break
+		}
+		err = writer.Write([]string{record.Name, record.TVGID})
+	}
+	writer.Flush()
+	err = errors.Join(err, writer.Error(), file.Close(), ctx.Err())
+	if err != nil {
+		return 0, err
+	}
+	if err = root.Rename(tempName, "channels.csv"); err != nil {
+		return 0, err
+	}
+	return len(channels), nil
+}
+
+func alphabetical(channels []channel) {
+	slices.SortStableFunc(channels, func(a, b channel) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+}
+
+// UpdateChannels plans or applies the selected channel updates.
+func (c *Client) UpdateChannels(ctx context.Context, action string, start int, dryRun bool) (int, int, error) {
+	query := make(url.Values)
+	if action == "renumber" || action == "reorder" {
+		query.Set("include_streams", "true")
+	}
+	channels, err := list[channel](ctx, c, channelsPath, query)
+	if err != nil {
+		return 0, 0, err
+	}
+	var changes []update
+	switch action {
+	case "renumber":
+		alphabetical(channels)
+		for _, item := range channels {
+			if len(item.Streams) == 0 {
+				continue
+			}
+			changes = append(changes, update{item.ID, map[string]any{"channel_number": start}})
+			start++
+		}
+	case "clear-epg":
+		for _, item := range channels {
+			if item.EPGID != 0 {
+				changes = append(changes, update{item.ID, map[string]any{"epg_data_id": nil}})
+			}
+		}
+	case "match":
+		records, err := list[struct {
+			ID    int    `json:"id"`
+			TVGID string `json:"tvg_id"`
+		}](ctx, c, "/api/epg/epgdata/", nil)
+		if err != nil {
+			return 0, 0, err
+		}
+		identifiers := make(map[int]string, len(records))
+		for _, record := range records {
+			identifiers[record.ID] = record.TVGID
+		}
+		for _, item := range channels {
+			if id, ok := identifiers[item.EPGID]; ok && item.TVGID != id {
+				changes = append(changes, update{item.ID, map[string]any{"tvg_id": id}})
+			}
+		}
+	case "reorder":
+		records, err := list[struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		}](ctx, c, "/api/m3u/accounts/", nil)
+		if err != nil {
+			return 0, 0, err
+		}
+		names := make(map[int]string, len(records))
+		for _, record := range records {
+			names[record.ID] = strings.ToLower(record.Name)
+		}
+		for _, item := range channels {
+			ids := make([]int, len(item.Streams))
+			order := make([]int, len(item.Streams))
+			for i, stream := range item.Streams {
+				ids[i] = stream.ID
+				order[i] = i
+			}
+			slices.SortStableFunc(order, func(a, b int) int {
+				left, lok := names[item.Streams[a].Account]
+				right, rok := names[item.Streams[b].Account]
+				if lok && !rok {
+					return -1
+				}
+				if !lok && rok {
+					return 1
+				}
+				return strings.Compare(left, right)
+			})
+			sorted := make([]int, len(ids))
+			for i, index := range order {
+				sorted[i] = ids[index]
+			}
+			if !slices.Equal(ids, sorted) {
+				changes = append(changes, update{item.ID, map[string]any{"streams": sorted}})
+			}
+		}
+	default:
+		return 0, 0, errors.New("unknown Dispatcharr action")
+	}
+	if dryRun {
+		return len(changes), 0, nil
+	}
+	var failures []error
+	done := 0
+	for _, change := range changes {
+		if ctx.Err() != nil {
+			return done, len(failures), errors.Join(append(failures, ctx.Err())...)
+		}
+		if err := c.request(ctx, "PATCH", fmt.Sprintf("%s%d/", channelsPath, change.id), change.fields, nil); err != nil {
+			failures = append(failures, fmt.Errorf("channel %d: %w", change.id, err))
+			continue
+		}
+		done++
+	}
+	return done, len(failures), errors.Join(failures...)
+}
