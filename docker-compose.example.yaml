@@ -13,6 +13,9 @@ services:
       # Enable both mounts for downloads and transcoding.
       # - "${FFMPEG_HOST_PATH:-/opt/media/bin/ffmpeg}:/usr/local/bin/ffmpeg:ro"
       # - "${FFPROBE_HOST_PATH:-/opt/media/bin/ffprobe}:/usr/local/bin/ffprobe:ro"
+      # necessary for hardware support
+      # - /usr/lib/x86_64-linux-gnu/dri:/usr/lib/x86_64-linux-gnu/dri:ro
+
 
     # Optional. Application settings normally come from /config/.env.
     # environment:

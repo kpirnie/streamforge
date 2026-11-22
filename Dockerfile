@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_REVISION=unknown
@@ -7,7 +7,7 @@ COPY go.mod *.go ./
 COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-X main.buildRevision=$BUILD_REVISION -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o /streamforge .
 
-FROM debian:trixie-slim
+FROM docker.io/library/debian:trixie-slim
 ARG PUID=1000
 ARG PGID=1000
 RUN apt-get update \

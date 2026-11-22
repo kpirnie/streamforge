@@ -10,8 +10,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/kpirnie/streamforge/internal/media"
-	"github.com/kpirnie/streamforge/internal/xtream"
 	"io"
 	"maps"
 	"os"
@@ -23,6 +21,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
+
+	"github.com/kpirnie/streamforge/internal/media"
+	"github.com/kpirnie/streamforge/internal/xtream"
 )
 
 type terminalChoice struct {
@@ -225,7 +226,22 @@ func runTerminal(ctx context.Context) error {
 	defer syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), syscall.TCSETS, uintptr(unsafe.Pointer(&saved)))
 	fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[?25l")
 	defer fmt.Fprint(os.Stdout, "\x1b[0m\x1b[?25h\x1b[?1049l")
-	fmt.Fprint(os.Stdout, "\x1b[2J\x1b[H\x1b[96m╔════════════════╗\r\n║  STREAM FORGE  ║\r\n╚════════════════╝\x1b[0m")
+	fmt.Fprint(os.Stdout,
+		"\x1b[2J\x1b[H"+
+			"\x1b[96m       o-----------o\r\n"+
+			"       | o       o |\r\n"+
+			"       | o   \x1b[92m>\x1b[96m   o |\r\n"+
+			"       o-----------o\r\n"+
+			"    ~~~~~~~\\      \x1b[92m* *\x1b[96m\r\n"+
+			"      ~~~~~~\\____/_______\r\n"+
+			"         \\_____________/\r\n"+
+			"              /   \\\r\n"+
+			"            _/_____\\_\r\n"+
+			"\r\n"+
+			"┌"+strings.Repeat("─", 34)+"┐\r\n"+
+			"│ \x1b[92mStreamForge - Forge Your Streams\x1b[96m │\r\n"+
+			"└"+strings.Repeat("─", 34)+"┘\x1b[0m\r\n",
+	)
 	session, err := openLog()
 	if err != nil {
 		return err
