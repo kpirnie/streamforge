@@ -132,7 +132,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	var mu sync.Mutex
 	var companionFailures []error
 	var done, skipped, cancelled int
-	completed := make(map[string]string)
+	completed := make(map[string]downloadedMedia)
 	queued := make(map[string]menu.QueueItem)
 	tracked := progress != nil && progress.complete != nil
 	progress.setTotal(len(paths))
@@ -171,7 +171,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 			}
 		}
 		if command.process && (result == nil || (existing && tracked && work.Err() == nil)) {
-			completed[path] = directory
+			completed[path] = downloadedMedia{directory: directory, movie: episode.Movie}
 			if tracked {
 				queued[path] = menu.QueueItem{Provider: provider, SeriesID: episode.SeriesID, ID: episode.ID}
 			}
@@ -215,7 +215,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 				return progress.complete(item.Provider, item.SeriesID, item.ID)
 			}
 		}
-		processErr = runTranscode(ctx, nil, completed, titles, value, false, yes, report, progress, finishItem)
+		processErr = runTranscode(ctx, nil, false, completed, titles, value, false, yes, report, progress, finishItem)
 	}
 	return errors.Join(ctx.Err(), errors.Join(failures...), errors.Join(companionFailures...), processErr)
 }

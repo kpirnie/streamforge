@@ -21,7 +21,7 @@ var availableSettings = []terminalSetting{
 	{"STREAMFORGE_PLAYBACK_PARENT", "Playback parent", "Absolute player-visible path", false},
 	{"STREAMFORGE_CODEC", "Video codec", "keep, hevc, or av1", false},
 	{"STREAMFORGE_CONTAINER", "Container", "keep, mkv, or mp4", false},
-	{"STREAMFORGE_QUALITY", "Quality", "balanced, high, or compression", false},
+	{"STREAMFORGE_QUALITY", "Quality", "script, balanced, high, or compression", false},
 	{"STREAMFORGE_HARDWARE", "Encoder", "auto, cpu, nvidia, intel, or amd", false},
 	{"STREAMFORGE_FORCE", "Reprocess existing", "true or false", false},
 	{"STREAMFORGE_CONVERT_HDR", "Convert HDR to SDR", "true or false", false},
@@ -62,7 +62,7 @@ func ValidSetting(key, value string) bool {
 	case "STREAMFORGE_CONTAINER":
 		return value == "keep" || value == "mkv" || value == "mp4"
 	case "STREAMFORGE_QUALITY":
-		return value == "balanced" || value == "high" || value == "compression"
+		return value == "script" || value == "balanced" || value == "high" || value == "compression"
 	case "STREAMFORGE_FORCE", "STREAMFORGE_CONVERT_HDR", "STREAMFORGE_DELETE_ORIGINAL":
 		return value == "true" || value == "false"
 	case "STREAMFORGE_HARDWARE":

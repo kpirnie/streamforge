@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Conversion is the session-wide profile used by FFmpeg.
@@ -26,6 +27,7 @@ type Conversion struct {
 	Quality    string
 	Hardware   string
 	ConvertHDR bool
+	Series     bool
 	Force      bool
 	Threads    int
 	Resolution string
@@ -46,9 +48,9 @@ func (c Conversion) Validate() error {
 		return errors.New("container must be keep, mkv, or mp4")
 	}
 	switch c.Quality {
-	case "balanced", "high", "compression":
+	case "script", "balanced", "high", "compression":
 	default:
-		return errors.New("quality must be balanced, high, or compression")
+		return errors.New("quality must be script, balanced, high, or compression")
 	}
 	switch c.Hardware {
 	case "auto", "cpu", "nvidia", "intel", "amd":
@@ -80,6 +82,16 @@ func (c Conversion) Target(input string) (string, string) {
 	stem := strings.TrimSuffix(relative, extension)
 	container := c.Container
 	if container == "keep" {
+		if c.Series {
+			switch strings.ToLower(extension) {
+			case ".avi", ".flv":
+				return filepath.Join("output", relative), strings.ToLower(extension[1:])
+			case ".mpg", ".mpeg", ".vob":
+				return filepath.Join("output", relative), "mpeg"
+			case ".wmv":
+				return filepath.Join("output", relative), "asf"
+			}
+		}
 		switch strings.ToLower(extension) {
 		case ".mp4", ".m4v":
 			return filepath.Join("output", relative), "mp4"
@@ -90,7 +102,7 @@ func (c Conversion) Target(input string) (string, string) {
 		case ".ts", ".m2ts":
 			return filepath.Join("output", relative), "mpegts"
 		case ".webm":
-			if c.Codec != "hevc" && !c.ConvertHDR {
+			if c.Series || (c.Codec != "hevc" && !c.ConvertHDR) {
 				return filepath.Join("output", relative), "webm"
 			}
 		}
@@ -111,6 +123,8 @@ func (c Conversion) EncoderInventory(ctx context.Context) (string, error) {
 	return string(output), nil
 }
 
+var errSeriesNoSavings = errors.New("series output is at least as large as the source")
+
 // Convert probes a source, applies the profile and publishes a validated output.
 func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, muxer, encoders string) (encoder string, skipped bool, retries int, err error) {
 	info, err := root.Lstat(input)
@@ -119,6 +133,9 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 	}
 	if !info.Mode().IsRegular() {
 		return "", false, 0, errors.New("source is not a regular media file")
+	}
+	if c.Series && !c.Force && info.Size() < 500*1024*1024 {
+		return "", true, 0, nil
 	}
 	source, err := root.OpenFile(input, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
@@ -158,6 +175,9 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		if stream.Type != "video" {
 			continue
 		}
+		if c.Series && stream.Disposition.AttachedPic != 0 {
+			continue
+		}
 		videoCount++
 		if sourceCodec == "" {
 			sourceCodec = stream.Codec
@@ -167,6 +187,12 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 			hdrStream = stream
 		}
 	}
+	if c.Series && sourceCodec == "" {
+		return "", false, 0, errors.New("series source does not contain a video stream")
+	}
+	if c.Series && !c.Force && (sourceCodec == "hevc" || sourceCodec == "h265" || sourceCodec == "av1") {
+		return "", true, 0, nil
+	}
 	toneMap := hdr && c.ConvertHDR
 	mustEncode := toneMap || c.Resolution != "" || c.FrameRate != ""
 	if codec == "keep" && mustEncode {
@@ -175,7 +201,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 	if codec == "keep" {
 		codec = "copy"
 	}
-	if !c.Force && !mustEncode && c.Aspect == "" && (codec == sourceCodec || (codec == "copy" && filepath.Ext(input) == filepath.Ext(target))) {
+	if !c.Force && !mustEncode && c.Aspect == "" && (codec == "copy" && filepath.Ext(input) == filepath.Ext(target)) {
 		if subtitle == nil {
 			return "", true, 0, nil
 		}
@@ -199,7 +225,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		return "", false, 0, errors.New("refusing to replace unrelated output")
 	}
 	if owned && !c.Force {
-		if subtitle == nil {
+		if c.Series && subtitle == nil {
 			return "", true, 0, nil
 		}
 		output, err := root.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
@@ -208,18 +234,38 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		}
 		existing, err := Probe(ctx, c.FFprobe, output)
 		output.Close()
-		if err == nil && hasSidecarStream(existing, subtitleIndex, subtitleCodec) {
-			return "", true, 0, nil
+		if err == nil {
+			videoMatches := codec == "copy"
+			for _, stream := range existing {
+				if stream.Type == "video" && stream.Disposition.AttachedPic == 0 {
+					videoMatches = videoMatches || stream.Codec == codec
+					break
+				}
+			}
+			if videoMatches && (subtitle == nil || hasSidecarStream(existing, subtitleIndex, subtitleCodec)) {
+				return "", true, 0, nil
+			}
 		}
 	}
 	cpu := map[string]string{"copy": "copy", "hevc": "libx265", "av1": "libsvtav1", "h264": "libx264", "vp9": "libvpx-vp9"}[codec]
 	if cpu == "" {
 		return "", false, 0, errors.New("source video codec has no supported tone-map encoder")
 	}
-	hardware := c.hardwareEncoder(codec, encoders, toneMap || len(hdrArgs) > 0)
+	hardware := c.hardwareEncoder(codec, encoders, (!c.Series && toneMap) || len(hdrArgs) > 0)
 	attempts := []string{cpu}
 	if hardware != "" {
 		attempts = []string{hardware, hardware, cpu}
+	}
+	if c.Series && codec != "copy" && c.Hardware != "cpu" {
+		if hardware == "" {
+			return "", false, 0, errors.New("no usable hardware encoder for series conversion")
+		}
+		attempts = []string{hardware}
+	}
+	if c.Series {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 4*time.Hour)
+		defer cancel()
 	}
 	for i, current := range attempts {
 		if ctx.Err() != nil {
@@ -248,6 +294,13 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 					err = errors.New("output did not retain the source HDR transfer and pixel format")
 				}
 			}
+			if err == nil && c.Series && !c.Force {
+				result, statErr := output.Stat()
+				err = statErr
+				if err == nil && result.Size() >= info.Size() {
+					return errSeriesNoSavings
+				}
+			}
 			if err == nil {
 				if err := markSource(output, input); err != nil {
 					return err
@@ -265,7 +318,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		if err == nil {
 			return current, false, i, nil
 		}
-		if errors.Is(err, os.ErrExist) && !c.Force && subtitle == nil {
+		if errors.Is(err, errSeriesNoSavings) || (errors.Is(err, os.ErrExist) && !c.Force && subtitle == nil) {
 			return current, true, i, nil
 		}
 		if i == len(attempts)-1 {
@@ -320,15 +373,26 @@ func (c Conversion) hardwareEncoder(codec, inventory string, toneMap bool) strin
 	if c.Hardware == "cpu" || codec == "copy" || toneMap {
 		return ""
 	}
-	for _, option := range []struct{ backend, suffix string }{
-		{"nvidia", "nvenc"}, {"intel", "qsv"}, {"amd", "vaapi"},
-	} {
-		if c.Hardware != "auto" && c.Hardware != option.backend {
-			continue
+	if (c.Hardware == "auto" || c.Hardware == "nvidia") && hardwareDevice("nvidia") != "" && listed(inventory, codec+"_nvenc") {
+		return codec + "_nvenc"
+	}
+	if c.vaapiDevice() != "" && listed(inventory, codec+"_vaapi") {
+		return codec + "_vaapi"
+	}
+	if ((c.Hardware == "auto" && !c.Series) || c.Hardware == "intel") && hardwareDevice("intel") != "" && listed(inventory, codec+"_qsv") {
+		return codec + "_qsv"
+	}
+	return ""
+}
+
+func (c Conversion) vaapiDevice() string {
+	if c.Hardware == "auto" {
+		if device := hardwareDevice("intel"); device != "" {
+			return device
 		}
-		if hardwareDevice(option.backend) != "" && listed(inventory, codec+"_"+option.suffix) {
-			return codec + "_" + option.suffix
-		}
+	}
+	if c.Hardware == "auto" || c.Hardware == "amd" {
+		return hardwareDevice("amd")
 	}
 	return ""
 }
@@ -338,7 +402,7 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 	threads := fmt.Sprint(max(1, c.Threads))
 	args = append(args, "-filter_threads", threads, "-filter_complex_threads", threads)
 	if strings.HasSuffix(encoder, "_vaapi") {
-		args = append(args, "-vaapi_device", hardwareDevice("amd"))
+		args = append(args, "-vaapi_device", c.vaapiDevice())
 	}
 	args = append(args, "-protocol_whitelist", "file,pipe", "-threads", threads, "-i", "/proc/self/fd/3")
 	if subtitle != nil {
@@ -370,8 +434,24 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 		args = append(args, "-aspect", c.Aspect)
 	}
 	args = append(args, hdrArgs...)
-	quality := map[string]int{"high": 20, "balanced": 26, "compression": 32}[c.Quality]
+	quality := map[string]int{"script": 26, "high": 20, "balanced": 26, "compression": 32}[c.Quality]
 	switch {
+	case c.Series && strings.HasSuffix(encoder, "_nvenc"):
+		args = append(args, "-rc", "constqp", "-qp", fmt.Sprint(quality))
+	case c.Series && strings.HasSuffix(encoder, "_vaapi"):
+		args = append(args, "-qp", fmt.Sprint(quality))
+	case !c.Series && c.Quality == "script" && encoder == "libx265":
+		args = append(args, "-preset", "fast", "-crf", "30")
+		if len(hdrArgs) == 0 {
+			params := "strong-intra-smoothing=0:rect=0:aq-mode=3:rd=4:psy-rd=2.0:rskip=2:pools=" + threads
+			args = append(args, "-x265-params", params)
+		}
+	case !c.Series && c.Quality == "script" && strings.HasSuffix(encoder, "_nvenc"):
+		args = append(args, "-preset", "p4", "-cq", "30")
+	case !c.Series && c.Quality == "script" && strings.HasSuffix(encoder, "_qsv"):
+		args = append(args, "-preset", "medium", "-global_quality", "30", "-look_ahead", "1")
+	case !c.Series && c.Quality == "script" && strings.HasSuffix(encoder, "_vaapi"):
+		args = append(args, "-global_quality", "30")
 	case encoder == "libvpx-vp9":
 		args = append(args, "-crf", fmt.Sprint(quality), "-b:v", "0")
 	case encoder == "libsvtav1":
@@ -387,6 +467,12 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 		args = append(args, "-global_quality", fmt.Sprint(quality))
 	case strings.HasSuffix(encoder, "_vaapi"):
 		args = append(args, "-qp", fmt.Sprint(quality))
+	}
+	if c.Series && muxer == "mp4" {
+		args = append(args, "-movflags", "+faststart")
+	}
+	if !c.Series {
+		args = append(args, "-max_muxing_queue_size", "9999")
 	}
 	args = append(args, "-f", muxer, "/proc/self/fd/4")
 	command := exec.CommandContext(ctx, c.FFmpeg, args...)

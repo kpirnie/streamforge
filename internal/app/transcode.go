@@ -20,13 +20,18 @@ import (
 	"github.com/kpirnie/streamforge/internal/media"
 )
 
-func runTranscode(ctx context.Context, args []string, seriesDirectories map[string]string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress, finishItem func(string) error) error {
+type downloadedMedia struct {
+	directory string
+	movie     bool
+}
+
+func runTranscode(ctx context.Context, args []string, series bool, downloads map[string]downloadedMedia, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress, finishItem func(string) error) error {
 	profile := media.Conversion{
 		FFmpeg:     value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg"),
 		FFprobe:    value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe"),
-		Codec:      value("STREAMFORGE_CODEC", "keep"),
+		Codec:      value("STREAMFORGE_CODEC", "hevc"),
 		Container:  value("STREAMFORGE_CONTAINER", "keep"),
-		Quality:    value("STREAMFORGE_QUALITY", "balanced"),
+		Quality:    value("STREAMFORGE_QUALITY", "script"),
 		Hardware:   value("STREAMFORGE_HARDWARE", "auto"),
 		Resolution: value("STREAMFORGE_RESOLUTION", ""),
 		FrameRate:  value("STREAMFORGE_FRAME_RATE", ""),
@@ -36,6 +41,7 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 	exclude := value("STREAMFORGE_EXCLUDE", "")
 	jobs := value("STREAMFORGE_JOBS", "")
 	var target string
+	var codecSet, containerSet, qualitySet, hdrSet bool
 	force, err := strconv.ParseBool(value("STREAMFORGE_FORCE", "false"))
 	if err != nil {
 		return errors.New("STREAMFORGE_FORCE must be a boolean")
@@ -53,11 +59,11 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 		key, option, supplied := strings.Cut(arg, "=")
 		switch key {
 		case "--codec":
-			profile.Codec = option
+			profile.Codec, codecSet = option, true
 		case "--container":
-			profile.Container = option
+			profile.Container, containerSet = option, true
 		case "--quality":
-			profile.Quality = option
+			profile.Quality, qualitySet = option, true
 		case "--resolution":
 			profile.Resolution = option
 		case "--frame-rate":
@@ -82,7 +88,7 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 			}
 			switch key {
 			case "--convert-hdr":
-				profile.ConvertHDR = enabled
+				profile.ConvertHDR, hdrSet = enabled, true
 			case "--force":
 				profile.Force = enabled
 			case "--delete-original":
@@ -95,7 +101,7 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 			target = arg
 		}
 	}
-	if target == "" && len(seriesDirectories) == 0 {
+	if target == "" && len(downloads) == 0 {
 		return errors.New("transcode requires a media path")
 	}
 	if parent != "" && (!filepath.IsAbs(parent) || strings.ContainsAny(parent, "\r\n")) {
@@ -124,8 +130,8 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 	if exclude != "" {
 		patterns = strings.Split(exclude, ",")
 	}
-	fromDownload := len(seriesDirectories) > 0
-	requested := slices.Sorted(maps.Keys(seriesDirectories))
+	fromDownload := len(downloads) > 0
+	requested := slices.Sorted(maps.Keys(downloads))
 	if !fromDownload {
 		requested = []string{target}
 	}
@@ -137,9 +143,22 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 		}
 		files = append(files, found...)
 	}
+	movieProfile, seriesProfile := profile, profile
+	seriesProfile.Series = true
+	seriesProfile.ConvertHDR = !hdrSet || profile.ConvertHDR
+	if !codecSet && profile.Codec == "keep" {
+		movieProfile.Codec, seriesProfile.Codec = "hevc", "hevc"
+	}
+	if !qualitySet && movieProfile.Quality == "balanced" {
+		movieProfile.Quality = "script"
+	}
+	if !containerSet && profile.Container == "keep" {
+		movieProfile.Container = "mkv"
+	}
 	type job struct {
 		input, output, muxer string
 		source               os.FileInfo
+		profile              media.Conversion
 	}
 	queue := make([]job, 0, len(files))
 	seen := make(map[string]bool)
@@ -153,8 +172,12 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 			return err
 		}
 		estimate += uint64(info.Size())
-		output, muxer := profile.Target(input)
-		if directory := seriesDirectories[input]; directory != "" {
+		selected := movieProfile
+		if series || (fromDownload && !downloads[input].movie) {
+			selected = seriesProfile
+		}
+		output, muxer := selected.Target(input)
+		if directory := downloads[input].directory; directory != "" {
 			output = filepath.Join("output", directory, filepath.Base(output))
 		}
 		output, err = media.SelectTarget(root, output, input, seen)
@@ -162,7 +185,7 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 			return err
 		}
 		seen[output] = true
-		queue = append(queue, job{input, output, muxer, info})
+		queue = append(queue, job{input, output, muxer, info, selected})
 	}
 	available, err := media.DestinationSpace(root, "output", false)
 	if err != nil {
@@ -176,24 +199,30 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 	if estimate > available && !yes {
 		return errors.New("estimated output exceeds available space; use --yes to proceed")
 	}
-	if err := profile.Validate(); err != nil {
-		return err
+	for _, selected := range []media.Conversion{movieProfile, seriesProfile} {
+		if err := selected.Validate(); err != nil {
+			return err
+		}
 	}
 	encoders, err := profile.EncoderInventory(ctx)
 	if err != nil {
 		return err
 	}
-	preferred := profile.PreferredEncoder(encoders)
-	if preferred != "" {
+	preferred := false
+	for _, item := range queue {
+		if item.profile.PreferredEncoder(encoders) != "" {
+			preferred = true
+			break
+		}
+	}
+	if preferred {
 		cap := 1
 		if jobs != "" {
 			cap = 2
 		}
 		parallel = min(parallel, cap)
-	} else if profile.Hardware != "auto" && profile.Hardware != "cpu" && profile.Codec != "keep" {
-		report("Requested hardware encoder unavailable; using CPU")
 	}
-	profile.Threads = max(1, budget/parallel)
+	threads := max(1, budget/parallel)
 	var mu sync.Mutex
 	progress.setTotal(len(queue))
 	var failures, postFailures []error
@@ -212,7 +241,8 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 			defer func() { <-workers }()
 			progress.status(fmt.Sprintf("Processing media item %d", index+1))
 			_, finish := progress.begin(ctx, "")
-			encoder, skip, attempts, err := profile.Convert(ctx, root, item.input, item.output, item.muxer, encoders)
+			item.profile.Threads = threads
+			encoder, skip, attempts, err := item.profile.Convert(ctx, root, item.input, item.output, item.muxer, encoders)
 			var companionErr, deleteErr error
 			var companion string
 			target := item.output
@@ -220,11 +250,11 @@ func runTranscode(ctx context.Context, args []string, seriesDirectories map[stri
 				if info, statErr := root.Lstat(item.output); statErr != nil || !info.Mode().IsRegular() {
 					target = item.input
 				}
-				companion, companionErr = media.WriteSTRMIn(ctx, root, target, item.input, parent, seriesDirectories[item.input], titles, false)
+				companion, companionErr = media.WriteSTRMIn(ctx, root, target, item.input, parent, downloads[item.input].directory, titles, false)
 			}
 			if err == nil && !skip {
 				if parent != "" {
-					companion, companionErr = media.WriteSTRMIn(ctx, root, item.output, item.input, parent, seriesDirectories[item.input], titles, false)
+					companion, companionErr = media.WriteSTRMIn(ctx, root, item.output, item.input, parent, downloads[item.input].directory, titles, false)
 				}
 				if remove && companionErr == nil && ctx.Err() == nil {
 					current, err := root.Lstat(item.input)

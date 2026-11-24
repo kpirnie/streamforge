@@ -22,14 +22,17 @@ type Stream struct {
 	ColorSpace  string        `json:"color_space"`
 	ColorRange  string        `json:"color_range"`
 	SideData    []hdrSideData `json:"side_data_list"`
-	Tags        struct {
+	Disposition struct {
+		AttachedPic int `json:"attached_pic"`
+	} `json:"disposition"`
+	Tags struct {
 		Language string `json:"language"`
 	} `json:"tags"`
 }
 
 // Probe validates a media file with the host-mounted FFprobe executable.
 func Probe(ctx context.Context, binary string, file *os.File) ([]Stream, error) {
-	command := exec.CommandContext(ctx, binary, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_name,codec_type,color_transfer,pix_fmt,color_primaries,color_space,color_range:stream_side_data:stream_tags=language", "-of", "json", "/proc/self/fd/3")
+	command := exec.CommandContext(ctx, binary, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_name,codec_type,color_transfer,pix_fmt,color_primaries,color_space,color_range:stream_side_data:stream_disposition=attached_pic:stream_tags=language", "-of", "json", "/proc/self/fd/3")
 	command.ExtraFiles = []*os.File{file}
 	output, err := command.Output()
 	if err != nil {

@@ -34,7 +34,8 @@ var static = map[string][]Choice{
 		{Label: "Dispatcharr", Page: "Dispatcharr"},
 		{Label: "Emby", Page: "Emby"},
 		{Label: "Downloads", Page: "Downloads"},
-		{Label: "Transcode media", Args: []string{"movies", "transcode"}, Prompt: "Media path", Confirm: true},
+		{Label: "Transcode movies", Args: []string{"movies", "transcode"}, Prompt: "Media path", Confirm: true},
+		{Label: "Transcode series", Args: []string{"series", "transcode"}, Prompt: "Media path", Confirm: true},
 		{Label: "Generate .strm companions", Args: []string{"strm"}, Prompt: "Media path", Confirm: true},
 		{Label: "System Status", Page: "System Status"},
 		{Label: " - Exit"},
@@ -63,7 +64,6 @@ var static = map[string][]Choice{
 		{Label: "List episodes", Args: []string{"series", "episodes"}, Prompt: "Provider name | Series ID"},
 		{Label: "Download series", Args: []string{"series", "download"}, Prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", Confirm: true},
 		{Label: "Download and process series", Args: []string{"series", "download", "--process"}, Prompt: "Provider name | Series ID | Episode IDs (comma separated or all)", Confirm: true},
-		{Label: "Transcode media", Args: []string{"movies", "transcode"}, Prompt: "Media path", Confirm: true},
 	},
 	"System Status": {
 		{Label: "Show status", Args: []string{"diagnostics"}},

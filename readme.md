@@ -214,20 +214,22 @@ streamforge movies download --movie="Example Provider|123" --process
 ### Transcode and generate companions
 
 ~~~sh
-streamforge movies transcode movies --codec=hevc --container=mkv --quality=balanced
-streamforge series transcode shows --convert-hdr --playback-parent=/library
+streamforge movies transcode movies
+streamforge series transcode shows --playback-parent=/library
 streamforge movies transcode movies/example.mkv --force --delete-original --yes
 streamforge strm input/shows --playback-parent=/library
 streamforge strm output/movies --exclude='extras,*.sample.mkv'
 ~~~
 
+Movie transcoding defaults to HEVC in MKV with audio copied, hardware encoding where available, and a libx265 fallback. A matching `.srt` beside the movie is embedded as English SubRip in MKV or as `mov_text` in MP4. Series transcoding defaults to hardware HEVC with constant QP 26 and keeps the source container. It tone-maps HDR to SDR and skips episodes under 500 MiB, episodes already in HEVC or AV1, and encodes that do not reduce file size. `--force` bypasses the series size and codec skips. Download processing selects the profile from the media type.
+
 Both transcode commands accept a file or scan a directory recursively. Output mirrors the input directory tree. Hidden entries and symlinks are skipped. Exclusions are comma-separated, case-insensitive basename globs.
 
 | Flag | Environment variable | Values or effect |
 | --- | --- | --- |
-| `--codec=VALUE` | `STREAMFORGE_CODEC` | `keep` (default), `hevc`, `av1`. |
-| `--container=VALUE` | `STREAMFORGE_CONTAINER` | `keep` (default), `mkv`, `mp4`. |
-| `--quality=VALUE` | `STREAMFORGE_QUALITY` | `balanced` (default), `high`, `compression`. |
+| `--codec=VALUE` | `STREAMFORGE_CODEC` | `hevc` (default), `keep`, `av1`. |
+| `--container=VALUE` | `STREAMFORGE_CONTAINER` | `keep`, `mkv`, `mp4`. Defaults to MKV for movies and source container for series. |
+| `--quality=VALUE` | `STREAMFORGE_QUALITY` | `script` (default), `balanced`, `high`, `compression`. |
 | `--hardware=VALUE` | `STREAMFORGE_HARDWARE` | `auto` (default), `cpu`, `nvidia`, `intel`, `amd`. |
 | `--jobs=N` | `STREAMFORGE_JOBS` | Override concurrent job count within available capacity. |
 | `--resolution=WIDTHxHEIGHT` | `STREAMFORGE_RESOLUTION` | Resize video. Source dimensions are the default. |
