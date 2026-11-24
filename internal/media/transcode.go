@@ -256,11 +256,16 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 	if hardware != "" {
 		attempts = []string{hardware, hardware, cpu}
 	}
-	if c.Series && codec != "copy" && c.Hardware != "cpu" {
-		if hardware == "" {
-			return "", false, 0, errors.New("no usable hardware encoder for series conversion")
-		}
+	if c.Series && hardware != "" {
 		attempts = []string{hardware}
+		if c.Hardware == "auto" && strings.HasSuffix(hardware, "_vaapi") {
+			intel := c
+			intel.Hardware = "intel"
+			if qsv := intel.hardwareEncoder(codec, encoders, false); qsv != "" {
+				attempts = append(attempts, qsv)
+			}
+		}
+		attempts = append(attempts, cpu)
 	}
 	if c.Series {
 		var cancel context.CancelFunc
@@ -379,7 +384,7 @@ func (c Conversion) hardwareEncoder(codec, inventory string, toneMap bool) strin
 	if c.vaapiDevice() != "" && listed(inventory, codec+"_vaapi") {
 		return codec + "_vaapi"
 	}
-	if ((c.Hardware == "auto" && !c.Series) || c.Hardware == "intel") && hardwareDevice("intel") != "" && listed(inventory, codec+"_qsv") {
+	if (c.Hardware == "auto" || c.Hardware == "intel") && hardwareDevice("intel") != "" && listed(inventory, codec+"_qsv") {
 		return codec + "_qsv"
 	}
 	return ""

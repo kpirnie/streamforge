@@ -221,7 +221,7 @@ streamforge strm input/shows --playback-parent=/library
 streamforge strm output/movies --exclude='extras,*.sample.mkv'
 ~~~
 
-Movie transcoding defaults to HEVC in MKV with audio copied, hardware encoding where available, and a libx265 fallback. A matching `.srt` beside the movie is embedded as English SubRip in MKV or as `mov_text` in MP4. Series transcoding defaults to hardware HEVC with constant QP 26 and keeps the source container. It tone-maps HDR to SDR and skips episodes under 500 MiB, episodes already in HEVC or AV1, and encodes that do not reduce file size. `--force` bypasses the series size and codec skips. Download processing selects the profile from the media type.
+Movie transcoding defaults to HEVC in MKV with audio copied, hardware encoding where available, and a libx265 fallback. A matching `.srt` beside the movie is embedded as English SubRip in MKV or as `mov_text` in MP4. Series transcoding keeps the source container and prefers hardware HEVC at QP 26, with a CPU fallback. It tone-maps HDR to SDR and skips episodes under 500 MiB, episodes already in HEVC or AV1, and encodes that do not reduce file size. `--force` bypasses the series size and codec skips. Download processing selects the profile from the media type.
 
 Both transcode commands accept a file or scan a directory recursively. Output mirrors the input directory tree. Hidden entries and symlinks are skipped. Exclusions are comma-separated, case-insensitive basename globs.
 
