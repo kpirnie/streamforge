@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/kpirnie/streamforge/internal/media"
 )
+
+var downloadedEpisodePath = regexp.MustCompile(`^input/provider-[0-9a-f]{16}/[0-9]+/([^/]+) - S([0-9]{2,})E[0-9]{2,}$`)
 
 type downloadedMedia struct {
 	directory string
@@ -177,7 +180,14 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 			selected = seriesProfile
 		}
 		output, muxer := selected.Target(input)
-		if directory := downloads[input].directory; directory != "" {
+		directory := downloads[input].directory
+		if directory == "" && series {
+			stem := strings.TrimSuffix(input, filepath.Ext(input))
+			if match := downloadedEpisodePath.FindStringSubmatch(stem); match != nil && filepath.IsLocal(match[1]) && match[1] != "." {
+				directory = filepath.Join(match[1], "Season "+match[2])
+			}
+		}
+		if directory != "" {
 			output = filepath.Join("output", directory, filepath.Base(output))
 		}
 		output, err = media.SelectTarget(root, output, input, seen)
