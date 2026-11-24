@@ -347,7 +347,7 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 	args = append(args, "-map", "0", "-map_metadata", "0", "-map_chapters", "0", "-c", "copy", "-c:v", encoder, "-threads:v", threads)
 	if subtitle != nil {
 		specifier := ":s:" + strconv.Itoa(subtitleIndex)
-		args = append(args, "-map", "1:s:0", "-c"+specifier, subtitleCodec, "-metadata"+specifier, "language=eng")
+		args = append(args, "-map", "1:s:0", "-c"+specifier, subtitleCodec, "-metadata:s"+specifier, "language=eng")
 	}
 	var filters []string
 	if toneMap {
