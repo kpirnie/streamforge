@@ -1,7 +1,5 @@
 <h1 align="center"><img src="docs/assets/streamforge-full-logo.png" alt="Stream Forge" width="640"></h1>
 
-## Badges
-
 [![Build Main](https://img.shields.io/github/actions/workflow/status/kpirnie/streamforge/build.yml?branch=main&label=Main&logoColor=white&logo=github&labelColor=000&style=for-the-badge)](https://github.com/kpirnie/streamforge/actions/workflows/build.yml?query=branch%3Amain)
 [![Build Develop](https://img.shields.io/github/actions/workflow/status/kpirnie/streamforge/build.yml?branch=develop&logoColor=white&label=Develop&logo=github&labelColor=000&style=for-the-badge)](https://github.com/kpirnie/streamforge/actions/workflows/build.yml?query=branch%3Adevelop)
 [![GitHub Issues](https://img.shields.io/github/issues/kpirnie/streamforge?style=for-the-badge&logo=github&color=006400&logoColor=white&labelColor=000)](https://github.com/kpirnie/streamforge/issues)
