@@ -129,12 +129,32 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 	if err != nil {
 		return "", false, 0, err
 	}
+	subtitle, err := openSidecar(root, input)
+	if err != nil {
+		return "", false, 0, err
+	}
+	var subtitleCodec string
+	if subtitle != nil {
+		defer subtitle.Close()
+		switch muxer {
+		case "matroska":
+			subtitleCodec = "subrip"
+		case "mp4":
+			subtitleCodec = "mov_text"
+		default:
+			return "", false, 0, fmt.Errorf("cannot embed external SRT in %s output; select MKV or MP4", muxer)
+		}
+	}
 	codec := c.Codec
 	hdr := false
 	sourceCodec := ""
 	var hdrStream Stream
 	videoCount := 0
+	subtitleIndex := 0
 	for _, stream := range streams {
+		if stream.Type == "subtitle" {
+			subtitleIndex++
+		}
 		if stream.Type != "video" {
 			continue
 		}
@@ -156,7 +176,10 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		codec = "copy"
 	}
 	if !c.Force && !mustEncode && c.Aspect == "" && (codec == sourceCodec || (codec == "copy" && filepath.Ext(input) == filepath.Ext(target))) {
-		return "", true, 0, nil
+		if subtitle == nil {
+			return "", true, 0, nil
+		}
+		codec = "copy"
 	}
 	var hdrArgs []string
 	if codec != "copy" && hdr && !toneMap {
@@ -176,7 +199,18 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		return "", false, 0, errors.New("refusing to replace unrelated output")
 	}
 	if owned && !c.Force {
-		return "", true, 0, nil
+		if subtitle == nil {
+			return "", true, 0, nil
+		}
+		output, err := root.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return "", false, 0, err
+		}
+		existing, err := Probe(ctx, c.FFprobe, output)
+		output.Close()
+		if err == nil && hasSidecarStream(existing, subtitleIndex, subtitleCodec) {
+			return "", true, 0, nil
+		}
 	}
 	cpu := map[string]string{"copy": "copy", "hevc": "libx265", "av1": "libsvtav1", "h264": "libx264", "vp9": "libvpx-vp9"}[codec]
 	if cpu == "" {
@@ -194,11 +228,14 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		if current != "copy" && !listed(encoders, current) {
 			return current, false, i, errors.New("required FFmpeg encoder is unavailable")
 		}
-		err := AtomicWrite(ctx, root, target, 0600, owned && c.Force, func(output *os.File) error {
-			if err := c.encode(ctx, source, output, current, muxer, toneMap, hdrArgs); err != nil {
+		err := AtomicWrite(ctx, root, target, 0600, owned, func(output *os.File) error {
+			if err := c.encode(ctx, source, output, subtitle, subtitleIndex, subtitleCodec, current, muxer, toneMap, hdrArgs); err != nil {
 				return err
 			}
 			validated, err := Probe(ctx, c.FFprobe, output)
+			if err == nil && subtitle != nil && !hasSidecarStream(validated, subtitleIndex, subtitleCodec) {
+				err = errors.New("output did not retain the additional English subtitle stream")
+			}
 			if err == nil && len(hdrArgs) > 0 {
 				preserved := false
 				for _, stream := range validated {
@@ -228,7 +265,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		if err == nil {
 			return current, false, i, nil
 		}
-		if errors.Is(err, os.ErrExist) && !c.Force {
+		if errors.Is(err, os.ErrExist) && !c.Force && subtitle == nil {
 			return current, true, i, nil
 		}
 		if i == len(attempts)-1 {
@@ -236,6 +273,43 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		}
 	}
 	return "", false, 0, errors.New("no available encoder")
+}
+
+func openSidecar(root *os.Root, input string) (*os.File, error) {
+	path := strings.TrimSuffix(input, filepath.Ext(input)) + ".srt"
+	// Reject symlinks and prevent a named pipe from blocking the open.
+	file, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open external SRT: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("inspect external SRT: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, errors.New("external SRT is not a regular file")
+	}
+	return file, nil
+}
+
+func hasSidecarStream(streams []Stream, index int, codec string) bool {
+	count := 0
+	found := false
+	for _, stream := range streams {
+		if stream.Type != "subtitle" {
+			continue
+		}
+		if count == index {
+			found = stream.Codec == codec && stream.Tags.Language == "eng"
+		}
+		count++
+	}
+	return found && count == index+1
 }
 
 func listed(inventory, encoder string) bool {
@@ -259,14 +333,22 @@ func (c Conversion) hardwareEncoder(codec, inventory string, toneMap bool) strin
 	return ""
 }
 
-func (c Conversion) encode(ctx context.Context, input, output *os.File, encoder, muxer string, toneMap bool, hdrArgs []string) error {
+func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File, subtitleIndex int, subtitleCodec, encoder, muxer string, toneMap bool, hdrArgs []string) error {
 	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y"}
 	threads := fmt.Sprint(max(1, c.Threads))
 	args = append(args, "-filter_threads", threads, "-filter_complex_threads", threads)
 	if strings.HasSuffix(encoder, "_vaapi") {
 		args = append(args, "-vaapi_device", hardwareDevice("amd"))
 	}
-	args = append(args, "-protocol_whitelist", "file,pipe", "-threads", threads, "-i", "/proc/self/fd/3", "-map", "0", "-map_metadata", "0", "-map_chapters", "0", "-c", "copy", "-c:v", encoder, "-threads:v", threads)
+	args = append(args, "-protocol_whitelist", "file,pipe", "-threads", threads, "-i", "/proc/self/fd/3")
+	if subtitle != nil {
+		args = append(args, "-protocol_whitelist", "file,pipe", "-f", "srt", "-i", "/proc/self/fd/5")
+	}
+	args = append(args, "-map", "0", "-map_metadata", "0", "-map_chapters", "0", "-c", "copy", "-c:v", encoder, "-threads:v", threads)
+	if subtitle != nil {
+		specifier := ":s:" + strconv.Itoa(subtitleIndex)
+		args = append(args, "-map", "1:s:0", "-c"+specifier, subtitleCodec, "-metadata"+specifier, "language=eng")
+	}
 	var filters []string
 	if toneMap {
 		filters = append(filters, "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
@@ -309,6 +391,9 @@ func (c Conversion) encode(ctx context.Context, input, output *os.File, encoder,
 	args = append(args, "-f", muxer, "/proc/self/fd/4")
 	command := exec.CommandContext(ctx, c.FFmpeg, args...)
 	command.ExtraFiles = []*os.File{input, output}
+	if subtitle != nil {
+		command.ExtraFiles = append(command.ExtraFiles, subtitle)
+	}
 	if err := command.Run(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
