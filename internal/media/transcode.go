@@ -503,6 +503,19 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 	return nil
 }
 
+// ValidVideoSetting checks a resolution, frame rate, or aspect ratio value.
+func ValidVideoSetting(key, value string) bool {
+	switch key {
+	case "STREAMFORGE_RESOLUTION":
+		return value == "" || resolutionPattern.MatchString(value)
+	case "STREAMFORGE_FRAME_RATE":
+		return validRatio(value, "/")
+	case "STREAMFORGE_ASPECT":
+		return validRatio(value, ":")
+	}
+	return false
+}
+
 var resolutionPattern = regexp.MustCompile(`^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$`)
 
 func validRatio(raw, separator string) bool {

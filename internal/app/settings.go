@@ -30,7 +30,7 @@ var settingKeys = []string{
 	"STREAMFORGE_PLAYBACK_PARENT", "STREAMFORGE_EXCLUDE", "STREAMFORGE_CODEC", "STREAMFORGE_CONTAINER",
 	"STREAMFORGE_QUALITY", "STREAMFORGE_HARDWARE", "STREAMFORGE_JOBS",
 	"STREAMFORGE_FORCE", "STREAMFORGE_CONVERT_HDR", "STREAMFORGE_DELETE_ORIGINAL",
-	"STREAMFORGE_RESOLUTION", "STREAMFORGE_FRAME_RATE", "STREAMFORGE_ASPECT",
+	"STREAMFORGE_RESOLUTION", "STREAMFORGE_FRAME_RATE", "STREAMFORGE_ASPECT", "STREAMFORGE_WORK_DIR",
 }
 
 func unknownSettings(env map[string]string) []string {
@@ -46,7 +46,7 @@ func unknownSettings(env map[string]string) []string {
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		switch key {
-		case "STREAMFORGE_WORK_DIR", "STREAMFORGE_RELEASE", "STREAMFORGE_BIN_DIR":
+		case "STREAMFORGE_RELEASE", "STREAMFORGE_BIN_DIR":
 			continue
 		}
 		accept(key)
@@ -62,14 +62,11 @@ func unknownSettings(env map[string]string) []string {
 	return warnings
 }
 
-func sessionValue(key, fallback string, env, session map[string]string) string {
+func settingValue(key, fallback string, saved map[string]string) string {
 	if v, ok := os.LookupEnv(key); ok {
 		return v
 	}
-	if v, ok := env[key]; ok {
-		return v
-	}
-	if v, ok := session[key]; ok {
+	if v, ok := saved[key]; ok {
 		return v
 	}
 	return fallback

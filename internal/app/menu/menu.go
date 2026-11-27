@@ -38,6 +38,7 @@ var static = map[string][]Choice{
 		{Label: "Transcode series", Args: []string{"series", "transcode"}, Prompt: "Media path", Confirm: true},
 		{Label: "Generate .strm companions", Args: []string{"strm"}, Prompt: "Media path", Confirm: true},
 		{Label: "System Status", Page: "System Status"},
+		{Label: "Reconfigure", Page: "Reconfigure"},
 		{Label: " - Exit"},
 	},
 	"Dispatcharr": {

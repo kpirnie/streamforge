@@ -57,12 +57,11 @@ For a Windows source build with the Explorer icon, run `go run ./internal/winico
 
 ## Files and permissions
 
-The configuration directory is `~/.config/streamforge` on Linux, `~/Library/Application Support/streamforge` on macOS, and `%APPDATA%\streamforge` on Windows. Linux follows `XDG_CONFIG_HOME` when set. Copy [.env.example](.env.example) or [providers.json.example](providers.json.example) there for the services you use. The workspace defaults to `~/StreamForge`. Set `STREAMFORGE_WORK_DIR` in the process environment to an absolute path to use an existing media workspace.
+The configuration directory is `~/.config/streamforge` on Linux, `~/Library/Application Support/streamforge` on macOS, and `%APPDATA%\streamforge` on Windows. Linux follows `XDG_CONFIG_HOME` when set. The workspace defaults to `~/StreamForge`. Set an absolute workspace path in **Reconfigure → Application settings**, or use the `STREAMFORGE_WORK_DIR` environment variable.
 
 | Path | Contents |
 | --- | --- |
-| `.env` in the configuration directory | Optional service credentials and application settings. |
-| `providers.json` in the configuration directory | Read-only Xtream provider definitions. |
+| `settings.sqlite3` in the configuration directory | Saved application settings, service credentials, and Xtream providers. |
 | `~/StreamForge/input` | Source media and completed provider downloads. |
 | `~/StreamForge/output` | Processed media and `.strm` companions. |
 | `~/StreamForge/download-queue.yaml` | Pending terminal download selections, restored on startup. |
@@ -74,7 +73,9 @@ For playback paths, set `STREAMFORGE_PLAYBACK_PARENT` to the absolute directory 
 
 ## Configuration
 
-Command-line options override corresponding environment settings. Process environment values override `.env` in the configuration directory. The interactive setup offers session values for eligible unset settings. Credentials use the environment, `.env`, or eligible interactive prompts.
+Open **Reconfigure** from the main menu to edit saved settings or add, edit, and remove Xtream providers. Clear a setting to return to its default. Workspace changes take effect after restarting. Command-line options override environment variables, which override saved values.
+
+On first launch with SQLite support, StreamForge imports any existing `.env` and `providers.json` from the configuration directory. It leaves both files in place. After import, Reconfigure writes future changes to `settings.sqlite3`. For an older container installation, copy those two files into the native configuration directory before the first launch.
 
 | Variable | Purpose |
 | --- | --- |
@@ -95,7 +96,7 @@ Use the standard proxy environment variables when needed. Keep configuration sec
 
 ### Xtream providers
 
-Each top-level key in `providers.json` is a provider name. The name shown in search results is also the name passed to `--provider`. Invalid entries are skipped so valid providers remain usable.
+Open **Reconfigure → Xtream providers** to manage providers. The provider name shown in search results is also the name passed to `--provider`. Invalid imported entries are skipped so valid providers remain usable.
 
 | Field | Purpose |
 | --- | --- |
@@ -229,7 +230,7 @@ The report includes build information, runtime, service status, application dire
 
 ## Interactive menu
 
-Choose **Continue with Defaults** or enter the settings available for the session. Use arrow keys to move, type to filter the current list, and press Enter to select. Protected actions present a preview. Press Y to proceed or Enter to decline. Results stay visible until you return. Esc goes back or cancels the active operation. Ctrl+C exits.
+Use arrow keys to move, type to filter the current list, and press Enter to select. Protected actions present a preview. Press Y to proceed or Enter to decline. Results stay visible until you return. Esc goes back or cancels the active operation. Ctrl+C exits.
 
 Open **Downloads** and choose **Search movies** or **Search series**. The results show providers with match counts. Choose a provider to see its matching titles. Select a movie to toggle it in the queue. For a series match, choose **Add All Episodes to Download Queue** or toggle individual episodes and seasons. The shared **Download queue** lets you review or remove selections before choosing **Download Only** or **Download and Process**. If some providers fail, the provider menu still opens for available matches. During a transfer, use the arrows and X to cancel one active download, or Esc to cancel the batch.
 

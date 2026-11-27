@@ -55,6 +55,8 @@ temp/
 
 # Local data and dumps
 *.sqlite
+settings.sqlite3
+settings.sqlite3-*
 *.db
 *.sql.gz
 

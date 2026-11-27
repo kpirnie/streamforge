@@ -10,9 +10,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"maps"
+	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,26 +70,42 @@ func runTerminal(ctx context.Context) error {
 	}
 	defer queue.close()
 
-	settings, _ := readEnvironment()
-	values := make(map[string]string)
-	startupValue := func(key, fallback string) string { return sessionValue(key, fallback, settings, nil) }
-	timeout, err := time.ParseDuration(startupValue("STREAMFORGE_TIMEOUT", "30s"))
-	if err != nil || timeout <= 0 {
-		timeout = 30 * time.Second
+	cfg := configurationFor(ctx)
+	settings, err := cfg.settings(ctx)
+	if err != nil {
+		return err
 	}
-	verify, err := strconv.ParseBool(startupValue("STREAMFORGE_VERIFY_TLS", "true"))
-	verify = err != nil || verify
-	providerTransport := makeTransport(timeout, verify)
-	defer providerTransport.CloseIdleConnections()
-	providers, warnings, providerErr := xtream.LoadProviders(filepath.Join(configDir, "providers.json"), startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, providerTransport)
-	providerCache := &cachedProviders{providers: providers, err: providerErr, titles: media.NewTitles(startupValue("TMDB_API_KEY", ""), startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, providerTransport, func(format string, args ...any) {
-		fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
-	})}
-	for _, warning := range warnings {
-		fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), warning)
+	records, err := cfg.providers(ctx)
+	if err != nil {
+		return err
 	}
+	editor := configurationEditor{store: cfg, settings: settings, records: records}
+	startupValue := func(key, fallback string) string { return settingValue(key, fallback, editor.settings) }
+	var providerTransport *http.Transport
+	var providerCache *cachedProviders
+	refreshProviders := func() {
+		if providerTransport != nil {
+			providerTransport.CloseIdleConnections()
+		}
+		timeout, err := time.ParseDuration(startupValue("STREAMFORGE_TIMEOUT", "30s"))
+		if err != nil || timeout <= 0 {
+			timeout = 30 * time.Second
+		}
+		verify, err := strconv.ParseBool(startupValue("STREAMFORGE_VERIFY_TLS", "true"))
+		providerTransport = makeTransport(timeout, err != nil || verify)
+		agent := startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20")
+		providers, warnings, providerErr := xtream.LoadProviders(editor.records, agent, timeout, providerTransport)
+		providerCache = &cachedProviders{providers: providers, err: providerErr, titles: media.NewTitles(startupValue("TMDB_API_KEY", ""), agent, timeout, providerTransport, func(format string, args ...any) {
+			fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+		})}
+		for _, warning := range warnings {
+			fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), warning)
+		}
+	}
+	refreshProviders()
+	defer func() { providerTransport.CloseIdleConnections() }()
 	startup := make(chan statusReport, 1)
-	go func() { startup <- diagnosticStatus(ctx, session, nil) }()
+	go func() { startup <- diagnosticStatus(ctx, session) }()
 	splash := time.NewTimer(5 * time.Second)
 	defer splash.Stop()
 	var status statusReport
@@ -117,9 +132,6 @@ func runTerminal(ctx context.Context) error {
 	var result string
 	browser := menu.NewBrowser(downloadPath)
 	browser.RestoreQueue(queue.snapshot())
-	if len(menu.Settings(settings, values)) > 1 {
-		page = menu.SessionSettings
-	}
 	var cancelOperation context.CancelFunc
 	type operationResult struct {
 		clipboard string
@@ -152,7 +164,6 @@ func runTerminal(ctx context.Context) error {
 		}
 		activeSelection = 0
 		currentProgress := progress
-		currentValues := maps.Clone(values)
 		args := slices.Clone(arguments)
 		if preview {
 			args = append(args, "--dry-run")
@@ -169,11 +180,11 @@ func runTerminal(ctx context.Context) error {
 			buffer := &terminalBuffer{}
 			var refreshed *statusReport
 			if retry {
-				result := diagnosticStatus(operation, session, currentValues)
+				result := diagnosticStatus(operation, session)
 				refreshed = &result
 			}
 			var discovery menu.Discovery
-			err := runCommand(operation, args, session, buffer, buffer, &discovery, currentProgress, currentValues, providerCache)
+			err := runCommand(operation, args, session, buffer, buffer, &discovery, currentProgress, providerCache)
 			var copied string
 			if clipboard && err == nil {
 				copied = base64.StdEncoding.EncodeToString(buffer.Bytes())
@@ -200,14 +211,25 @@ func runTerminal(ctx context.Context) error {
 			finished <- operationResult{copied, discovery, result, refreshed, preview, err != nil || operation.Err() != nil}
 		}()
 	}
+	showConfigurationError := func(err error) { mode, result, scroll = "result", err.Error(), 0 }
+	leaveReconfigure := func() {
+		navigate("Main")
+		if editor.dirty {
+			editor.dirty = false
+			refreshProviders()
+			choice = menu.Choice{Label: "Retry Connections"}
+			arguments = []string{"diagnostics"}
+			launch(false)
+		}
+	}
 	for {
-		choices := browser.Choices(page)
-		if page == menu.SessionSettings {
-			choices = menu.Settings(settings, values)
+		choices := editor.choices(page)
+		if choices == nil {
+			choices = browser.Choices(page)
 		}
 		available := make([]menu.Choice, 0, len(choices))
 		for _, item := range choices {
-			if providerErr != nil && page == "Downloads" && (item.Page == menu.DownloadQueue || (len(item.Args) > 1 && item.Args[1] != "transcode")) {
+			if providerCache.err != nil && page == "Downloads" && (item.Page == menu.DownloadQueue || (len(item.Args) > 1 && item.Args[1] != "transcode")) {
 				item.Label += " (disabled)"
 				item.Args = []string{"diagnostics"}
 				item.Prompt = ""
@@ -346,7 +368,11 @@ func runTerminal(ctx context.Context) error {
 				case key == "escape":
 					if filter != "" {
 						filter, selection = "", 0
-					} else if page != "Main" && page != menu.SessionSettings {
+					} else if page == reconfigurePage {
+						leaveReconfigure()
+					} else if previous := reconfigurePrevious(page); previous != "" {
+						navigate(previous)
+					} else if page != "Main" {
 						navigate(browser.Previous(page))
 					}
 				case key == "up":
@@ -360,13 +386,22 @@ func runTerminal(ctx context.Context) error {
 				case key == "enter" && len(available) > 0:
 					choice = available[selection]
 					switch {
-					case choice.Mark == "accept-settings":
-						navigate("Main")
-						if len(values) > 0 {
-							choice = menu.Choice{Label: "Retry Connections"}
-							arguments = []string{"diagnostics"}
-							launch(false)
+					case choice.Mark == "config-done":
+						leaveReconfigure()
+					case choice.Mark == "config-setting" || choice.Mark == "config-provider-field":
+						mode, input = "input", editor.input(choice)
+					case choice.Mark == "config-provider-new" || choice.Mark == "config-provider-open":
+						editor.openProvider(choice.Setting)
+						navigate(providerEditorPage)
+					case choice.Mark == "config-provider-save":
+						if err := editor.saveProvider(ctx); err != nil {
+							showConfigurationError(err)
+						} else {
+							navigate(providerListPage)
 						}
+					case choice.Mark == "config-provider-remove":
+						choice.Label = "Remove provider " + editor.name
+						mode, result, scroll = "confirm", "", 0
 					case choice.Mark != "":
 						arguments = browser.Mark(choice)
 						if len(arguments) != 0 {
@@ -378,8 +413,6 @@ func runTerminal(ctx context.Context) error {
 					case choice.Page != "":
 						browser.Open(choice)
 						navigate(choice.Page)
-					case choice.Setting != "":
-						mode, input = "input", ""
 					case choice.Args == nil:
 						return nil
 					case choice.Prompt != "":
@@ -403,17 +436,11 @@ func runTerminal(ctx context.Context) error {
 					input += strings.TrimPrefix(key, "text:")
 				case key == "enter":
 					var err error
-					if choice.Setting != "" {
-						value := strings.TrimSpace(input)
-						if choice.Secret {
-							value = input
-						}
-						if menu.ValidSetting(choice.Setting, value) {
-							values[choice.Setting] = value
-							input = ""
-							mode = "menu"
+					if choice.Mark == "config-setting" || choice.Mark == "config-provider-field" {
+						if err := editor.edit(ctx, choice, input); err != nil {
+							showConfigurationError(err)
 						} else {
-							mode, result, scroll = "result", "Invalid setting value", 0
+							mode, input = "menu", ""
 						}
 						break
 					}
@@ -433,8 +460,16 @@ func runTerminal(ctx context.Context) error {
 					scroll++
 				}
 				if key == "text:y" || key == "text:Y" {
-					arguments = append(arguments, "--yes")
-					launch(false)
+					if choice.Mark == "config-provider-remove" {
+						if err := editor.removeProvider(ctx); err != nil {
+							showConfigurationError(err)
+						} else {
+							navigate(providerListPage)
+						}
+					} else {
+						arguments = append(arguments, "--yes")
+						launch(false)
+					}
 				} else if key == "enter" || key == "escape" {
 					mode = "menu"
 				}

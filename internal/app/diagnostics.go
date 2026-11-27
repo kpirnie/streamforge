@@ -54,7 +54,7 @@ func diagnosticDevicePaths() []string {
 	return []string{"/dev/nvidiactl", "/dev/dri/renderD128"}
 }
 
-func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]string) statusReport {
+func diagnosticStatus(ctx context.Context, logFile *os.File) statusReport {
 	report := statusReport{Version: "development", Commit: "unknown", Built: "unknown", Platform: runtime.GOOS + "/" + runtime.GOARCH, Runtime: runtime.GOOS,
 		Dependencies: make(map[string]string), Devices: make(map[string]bool), Mounts: make(map[string]string), Services: make(map[string]string),
 		Findings: []string{}, Session: []string{}}
@@ -77,12 +77,12 @@ func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]
 	if buildDate != "" {
 		report.Built = buildDate
 	}
-	env, err := readEnvironment()
+	env, err := configurationFor(ctx).settings(ctx)
 	report.Warnings = unknownSettings(env)
 	if err != nil {
 		report.Findings = append(report.Findings, "Configuration could not be read or contains invalid entries")
 	}
-	value := func(key, fallback string) string { return sessionValue(key, fallback, env, session) }
+	value := func(key, fallback string) string { return settingValue(key, fallback, env) }
 	for _, device := range diagnosticDevicePaths() {
 		file, err := os.OpenFile(device, os.O_RDWR, 0)
 		report.Devices[device] = err == nil
@@ -239,7 +239,7 @@ func serviceStatus(ctx context.Context, value func(string, string) string, findi
 	return services, findings
 }
 
-func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *os.File, dryRun bool, session map[string]string) error {
+func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *os.File, dryRun bool) error {
 	asJSON, save := false, false
 	for _, arg := range args {
 		switch arg {
@@ -251,7 +251,7 @@ func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *
 			return errors.New("usage: streamforge diagnostics [--json] [--save]")
 		}
 	}
-	report := diagnosticStatus(ctx, logFile, session)
+	report := diagnosticStatus(ctx, logFile)
 	var data []byte
 	extension := ".txt"
 	if asJSON {

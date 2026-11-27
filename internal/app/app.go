@@ -30,16 +30,29 @@ import (
 // Run starts the interactive terminal or runs a single command.
 func Run(ctx context.Context, args []string, revision, date string) error {
 	buildRevision, buildDate = revision, date
-	if err := initializePaths(); err != nil {
+	if err := initializeConfigDir(); err != nil {
+		return err
+	}
+	cfg, err := openConfiguration(ctx, configDir)
+	if err != nil {
+		return fmt.Errorf("open configuration database: %w", err)
+	}
+	defer cfg.db.Close()
+	ctx = context.WithValue(ctx, configurationKey{}, cfg)
+	settings, err := cfg.settings(ctx)
+	if err != nil {
+		return fmt.Errorf("read saved settings: %w", err)
+	}
+	if err := initializePaths(settings); err != nil {
 		return err
 	}
 	if len(args) == 0 && terminalAvailable(os.Stdin) && terminalAvailable(os.Stdout) {
 		return runTerminal(ctx)
 	}
-	return runCommand(ctx, args, nil, os.Stdout, os.Stderr, nil, nil, nil, nil)
+	return runCommand(ctx, args, nil, os.Stdout, os.Stderr, nil, nil, nil)
 }
 
-func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr io.Writer, discovery *menu.Discovery, progress *operationProgress, sessionValues map[string]string, providerCache *cachedProviders) (runErr error) {
+func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr io.Writer, discovery *menu.Discovery, progress *operationProgress, providerCache *cachedProviders) (runErr error) {
 	var command []string
 	overrides := make(map[string]string)
 	var dryRun, verbose, yes, help bool
@@ -97,7 +110,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			}
 			logs = file
 		}
-		return runDiagnostics(ctx, command[1:], out, logs, dryRun, sessionValues)
+		return runDiagnostics(ctx, command[1:], out, logs, dryRun)
 	}
 	if len(command) < 2 {
 		return errors.New("unknown command. Run streamforge --help")
@@ -162,7 +175,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 	if verbose {
 		message("DEBUG", stderr, "%s action %s, dry run: %t", service, action, dryRun)
 	}
-	settings, err := readEnvironment()
+	settings, err := configurationFor(ctx).settings(ctx)
 	if err != nil {
 		return err
 	}
@@ -173,7 +186,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 		if option, ok := overrides[key]; ok {
 			return option
 		}
-		return sessionValue(key, fallback, settings, sessionValues)
+		return settingValue(key, fallback, settings)
 	}
 	if strings.ContainsAny(value("STREAMFORGE_USER_AGENT", ""), "\r\n") {
 		return errors.New("STREAMFORGE_USER_AGENT must be one line")
@@ -258,7 +271,11 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			providers, err = providerCache.providers, providerCache.err
 		} else {
 			var warnings []error
-			providers, warnings, err = xtream.LoadProviders(filepath.Join(configDir, "providers.json"), agent, timeout, transport)
+			records, readErr := configurationFor(ctx).providers(ctx)
+			if readErr != nil {
+				return readErr
+			}
+			providers, warnings, err = xtream.LoadProviders(records, agent, timeout, transport)
 			for _, warning := range warnings {
 				message("WARN", stderr, "%s", warning)
 			}
@@ -428,9 +445,8 @@ func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action stri
 	return err
 }
 
-func readEnvironment() (map[string]string, error) {
+func readLegacyEnvironment(path string) (map[string]string, error) {
 	settings := make(map[string]string)
-	path := filepath.Join(configDir, ".env")
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return settings, nil

@@ -44,7 +44,7 @@ type Browser struct {
 // Choices returns the entries and navigation actions for a page.
 func (s *Browser) Choices(page string) []Choice {
 	choices := s.choices(page)
-	if page == "Main" || page == SessionSettings {
+	if page == "Main" {
 		return choices
 	}
 	return append(slices.Clone(choices),

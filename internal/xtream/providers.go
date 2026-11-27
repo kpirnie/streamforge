@@ -44,25 +44,30 @@ type providerConfig struct {
 	Headers       map[string]string `json:"headers"`
 }
 
-// LoadProviders reads the user-managed provider file without modifying it.
-func LoadProviders(path, agent string, timeout time.Duration, transport http.RoundTripper) (*Providers, []error, error) {
+// ReadProviderRecords reads the legacy provider configuration for migration.
+func ReadProviderRecords(path string) (map[string]json.RawMessage, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil, fmt.Errorf("Xtream providers require %s", path)
+			return nil, err
 		}
-		return nil, nil, errors.New("could not open Xtream provider configuration")
+		return nil, errors.New("could not open Xtream provider configuration")
 	}
 	defer file.Close()
 	const limit = 8 << 20
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil || len(data) > limit {
-		return nil, nil, errors.New("could not read Xtream provider configuration")
+		return nil, errors.New("could not read Xtream provider configuration")
 	}
 	var records map[string]json.RawMessage
 	if err := json.Unmarshal(data, &records); err != nil || records == nil {
-		return nil, nil, errors.New("Xtream provider configuration must be an object keyed by provider name")
+		return nil, errors.New("Xtream provider configuration must be an object keyed by provider name")
 	}
+	return records, nil
+}
+
+// LoadProviders validates saved provider records and constructs their client.
+func LoadProviders(records map[string]json.RawMessage, agent string, timeout time.Duration, transport http.RoundTripper) (*Providers, []error, error) {
 	providers := &Providers{
 		agent:  agent,
 		client: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
@@ -91,6 +96,12 @@ func LoadProviders(path, agent string, timeout time.Duration, transport http.Rou
 		return nil, warnings, errors.New("no valid Xtream providers")
 	}
 	return providers, warnings, nil
+}
+
+// ValidateProviderRecord applies the same checks as loading the provider at runtime.
+func ValidateProviderRecord(name string, record json.RawMessage) error {
+	_, err := parseProvider(name, record)
+	return err
 }
 
 func parseProvider(name string, raw json.RawMessage) (provider, error) {

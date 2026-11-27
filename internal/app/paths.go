@@ -17,7 +17,7 @@ import (
 
 var configDir string
 
-func initializePaths() error {
+func initializeConfigDir() error {
 	config, err := os.UserConfigDir()
 	if err != nil {
 		return fmt.Errorf("locate user configuration directory: %w", err)
@@ -26,7 +26,11 @@ func initializePaths() error {
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return fmt.Errorf("create configuration directory: %w", err)
 	}
-	work := os.Getenv("STREAMFORGE_WORK_DIR")
+	return nil
+}
+
+func initializePaths(settings map[string]string) error {
+	work := settingValue("STREAMFORGE_WORK_DIR", "", settings)
 	if work == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
