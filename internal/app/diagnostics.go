@@ -47,18 +47,8 @@ type statusReport struct {
 	Session      []string          `json:"session_log"`
 }
 
-func runtimeName() string {
-	if _, err := os.Stat("/run/.containerenv"); err == nil {
-		return "Podman"
-	}
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return "Docker"
-	}
-	return "Linux"
-}
-
 func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]string) statusReport {
-	report := statusReport{Version: "development", Commit: "unknown", Built: "unknown", Platform: runtime.GOOS + "/" + runtime.GOARCH, Runtime: runtimeName(),
+	report := statusReport{Version: "development", Commit: "unknown", Built: "unknown", Platform: runtime.GOOS + "/" + runtime.GOARCH, Runtime: runtime.GOOS,
 		Dependencies: make(map[string]string), Devices: make(map[string]bool), Mounts: make(map[string]string), Services: make(map[string]string),
 		Findings: []string{}, Session: []string{}}
 	if build, ok := debug.ReadBuildInfo(); ok {

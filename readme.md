@@ -1,7 +1,7 @@
 <h1 align="center"><img src="docs/assets/streamforge-full-logo.png" alt="Stream Forge" width="640"></h1>
 
 [![Build Main](https://img.shields.io/github/actions/workflow/status/kpirnie/streamforge/build.yml?branch=main&label=Main&logoColor=white&logo=github&labelColor=000&style=for-the-badge)](https://github.com/kpirnie/streamforge/actions/workflows/build.yml?query=branch%3Amain)
-[![Build Develop](https://img.shields.io/github/actions/workflow/status/kpirnie/streamforge/build.yml?branch=develop&logoColor=white&label=Develop&logo=github&labelColor=000&style=for-the-badge)](https://github.com/kpirnie/streamforge/actions/workflows/build.yml?query=branch%3Adevelop)
+[![Build Develop](https://img.shields.io/github/actions/workflow/status/kpirnie/streamforge/ci.yml?branch=develop&logoColor=white&label=Develop&logo=github&labelColor=000&style=for-the-badge)](https://github.com/kpirnie/streamforge/actions/workflows/ci.yml?query=branch%3Adevelop)
 [![GitHub Issues](https://img.shields.io/github/issues/kpirnie/streamforge?style=for-the-badge&logo=github&color=006400&logoColor=white&labelColor=000)](https://github.com/kpirnie/streamforge/issues)
 [![GitHub Security](https://img.shields.io/badge/Security-View-6495ED?link=https://github.com/kpirnie/streamforge/security&logoColor=white&style=for-the-badge&labelColor=000&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyTDQgNXY2LjA5YzAgNS4wNSAzLjQxIDkuNzYgOCAxMC45MSA0LjU5LTEuMTUgOC01Ljg2IDgtMTAuOTFWNWwtOC0zeiIvPjwvc3ZnPg==)](https://github.com/kpirnie/streamforge/security)
 [![Last Commit](https://img.shields.io/github/last-commit/kpirnie/streamforge?style=for-the-badge&labelColor=000&logoColor=white&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIxLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3QgeD0iMyIgeT0iNC41IiB3aWR0aD0iMTgiIGhlaWdodD0iMTYuNSIgcng9IjIiLz48bGluZSB4MT0iMyIgeTE9IjkuNSIgeDI9IjIxIiB5Mj0iOS41Ii8+PGxpbmUgeDE9IjgiIHkxPSIyLjUiIHgyPSI4IiB5Mj0iNi41Ii8+PGxpbmUgeDE9IjE2IiB5MT0iMi41IiB4Mj0iMTYiIHkyPSI2LjUiLz48L3N2Zz4=)](https://github.com/kpirnie/streamforge/commits/main)
@@ -12,96 +12,51 @@
 
 Stream Forge is a Linux terminal application for administering Dispatcharr and Emby, downloading Xtream movies and series, transcoding media, and generating `.strm` companions. Run it with no arguments in a terminal for the interactive menu. Pass a command for a single operation, a script, or a cron job.
 
-## Quick start with Compose
+## Install on Linux
 
-From a checkout of the branch that contains the application, create the host directories and copy the examples.
-
-~~~sh
-mkdir -p config working/input working/output
-cp .env.example config/.env
-# For Xtream only
-cp providers.json.example config/providers.json
-
-# Edit the files under config, then open the interactive menu
-export PUID=$(id -u) PGID=$(id -g)
-docker compose pull
-docker compose run --rm streamforge
-
-# Run one command without a TTY
-docker compose run --rm -T streamforge dispatcharr export
-~~~
-
-Start with [compose.yaml](compose.yaml), [.env.example](.env.example), and [providers.json.example](providers.json.example). Enable only the services you use. For FFmpeg and FFprobe, see [Media tools and GPU access](#media-tools-and-gpu-access).
-
-The Compose example uses `ghcr.io/kpirnie/streamforge:dev`. The build workflow publishes `dev` from `develop` and `latest` from `main`. Set `STREAMFORGE_IMAGE` to select a published tag. Both builds target Linux `amd64` and `arm64`.
-
-## Docker and Podman
-
-Use the same configuration and working directories with either runtime. Match the container user to the host account that owns those directories. The image defaults to UID and GID 1000.
+Download and run the bootstrapper as your regular user. It checks that both `ffmpeg` and `ffprobe` run from `PATH`, then verifies the release checksum and installs StreamForge.
 
 ~~~sh
-image=ghcr.io/kpirnie/streamforge:dev
-
-# Docker interactive menu
-docker run --rm -it --read-only --user "$(id -u):$(id -g)" \
-  -v "$PWD/config:/config:ro" -v "$PWD/working:/working:rw" "$image"
-
-# Docker single command
-docker run --rm --read-only --user "$(id -u):$(id -g)" \
-  -v "$PWD/config:/config:ro" -v "$PWD/working:/working:rw" \
-  "$image" dispatcharr export
-
-# Rootless Podman interactive menu
-podman run --rm -it --read-only --userns=keep-id --user "$(id -u):$(id -g)" \
-  -v "$PWD/config:/config:ro" -v "$PWD/working:/working:rw" "$image"
-
-# Rootless Podman single command
-podman run --rm --read-only --userns=keep-id --user "$(id -u):$(id -g)" \
-  -v "$PWD/config:/config:ro" -v "$PWD/working:/working:rw" \
-  "$image" diagnostics --json
+curl -fsSLO https://raw.githubusercontent.com/kpirnie/streamforge/main/bootstrap.sh
+sh bootstrap.sh
+~/.local/bin/streamforge
 ~~~
 
-For rootless Podman with the `podman-compose` provider, match the host identity and run without a shared pod:
+The default install location is `~/.local/bin`. Set `STREAMFORGE_BIN_DIR` to install elsewhere. The installer selects the correct Linux architecture. Each binary is statically linked and works on glibc and musl distributions.
 
-~~~sh
-export PUID=$(id -u) PGID=$(id -g) STREAMFORGE_USERNS_MODE=keep-id
-podman compose --in-pod=false run --rm streamforge
-podman compose --in-pod=false run --rm -T streamforge diagnostics --json
-~~~
+Pushes to `main` publish prereleases tagged `beta-<commit SHA>`. Pushing a version tag publishes a stable release. The bootstrapper installs the latest stable release by default. Set `STREAMFORGE_RELEASE` to a tag from the [releases page](https://github.com/kpirnie/streamforge/releases) to install a specific stable or beta build.
 
-Use `:ro,Z` and `:rw,Z` on bind mounts that need private SELinux labels. Use `:z` for directories intentionally shared by multiple containers. Stream Forge makes outbound connections and needs no published ports.
+Run `streamforge` in a terminal to open the interactive menu, or run `streamforge --help` for commands. Use `streamforge --icon > streamforge.png` to export the embedded app icon.
 
-## Native Linux CLI
+### Build from source
 
-Build using Go 1.26 or newer. Native runs use the same fixed `/config` and `/working` paths as containers. Create or mount those directories on the host and give the running account read access to configuration and write access to the working tree.
+Use the Go version specified in `go.mod`.
 
 ~~~sh
 CGO_ENABLED=0 go build -trimpath -o streamforge .
 ./streamforge --help
-./streamforge
-./streamforge dispatcharr export
 ~~~
-
-Run the binary with no arguments in a TTY to open the menu. No arguments without a TTY prints usage and exits. For container commands, replace `./streamforge` with `docker compose run --rm -T streamforge` or put the subcommand after the image name in `docker run` or `podman run`.
 
 ## Files and permissions
 
+On Linux, the configuration directory defaults to `~/.config/streamforge` and follows `XDG_CONFIG_HOME` when set. Copy [.env.example](.env.example) or [providers.json.example](providers.json.example) there for the services you use. The workspace defaults to `~/StreamForge`. Set `STREAMFORGE_WORK_DIR` in the process environment to an absolute path to use an existing media workspace.
+
 | Path | Contents |
 | --- | --- |
-| `/config/.env` | Optional service credentials and application settings. |
-| `/config/providers.json` | Read-only Xtream provider definitions. |
-| `/working/input` | Source media and completed provider downloads. |
-| `/working/output` | Processed media and `.strm` companions. |
-| `/working/download-queue.yaml` | Pending terminal download selections, restored on startup. |
-| `/working` | `channels.csv`, session logs, and saved diagnostics. |
+| `~/.config/streamforge/.env` | Optional service credentials and application settings. |
+| `~/.config/streamforge/providers.json` | Read-only Xtream provider definitions. |
+| `~/StreamForge/input` | Source media and completed provider downloads. |
+| `~/StreamForge/output` | Processed media and `.strm` companions. |
+| `~/StreamForge/download-queue.yaml` | Pending terminal download selections, restored on startup. |
+| `~/StreamForge` | `channels.csv`, session logs, and saved diagnostics. |
 
-Mount `/config` read-only and `/working` read/write. Keep credentials in the host configuration directory or pass them through the process environment. Relative media paths such as `shows/Example` resolve under `/working/input`. You can also specify `input/shows/Example` or `/working/input/shows/Example`. The `strm` command accepts either tree. Transcode commands read from `input`.
+Keep credentials in the user configuration directory or pass them through the process environment. Relative media paths such as `shows/Example` resolve under `input` in the workspace. You can also pass `input/shows/Example` or its absolute path. The `strm` command accepts both media trees. Transcode commands read from `input`.
 
 For playback paths, set `STREAMFORGE_PLAYBACK_PARENT` to the absolute directory the player sees above both trees. For example, `/library` produces `/library/input/shows/episode.mkv` for source media or `/library/output/shows/episode.mkv` for processed media. The player needs those trees available at the paths written inside the companions.
 
 ## Configuration
 
-Command-line options override corresponding environment settings. Process environment values override `/config/.env`. The interactive setup offers session values for eligible unset settings. Credentials use the environment, `/config/.env`, or eligible interactive prompts.
+Command-line options override corresponding environment settings. Process environment values override `~/.config/streamforge/.env`. The interactive setup offers session values for eligible unset settings. Credentials use the environment, `~/.config/streamforge/.env`, or eligible interactive prompts.
 
 | Variable | Purpose |
 | --- | --- |
@@ -116,9 +71,9 @@ Command-line options override corresponding environment settings. Process enviro
 | `STREAMFORGE_START_CHANNEL` | First channel number for renumbering, default `1`. |
 | `STREAMFORGE_NORMALIZER` | Optional Go regular expression whose matches are removed from stream names during grouping. |
 | `STREAMFORGE_PLAYBACK_PARENT` | Absolute player-visible directory above `input` and `output`. |
-| `STREAMFORGE_FFMPEG`, `STREAMFORGE_FFPROBE` | Absolute paths to the executables, default `/usr/local/bin/ffmpeg` and `/usr/local/bin/ffprobe`. |
+| `STREAMFORGE_FFMPEG`, `STREAMFORGE_FFPROBE` | Absolute paths to the executables. Both default to discovery on `PATH`. |
 
-Use the host or container’s standard proxy environment when needed. Avoid storing secrets in the repository. Compose interpolation for mount paths, user IDs, and the image uses the shell environment or the Compose project’s own `.env`. Stream Forge uses `config/.env` for application settings.
+Use the standard proxy environment variables when needed. Keep configuration secrets outside the repository.
 
 ### Xtream providers
 
@@ -159,7 +114,7 @@ A failed command exits nonzero. Batch commands can preserve completed items and 
 | `dispatcharr renumber` | Assign consecutive numbers to nonempty channels in alphabetical order. |
 | `dispatcharr reorder` | Sort streams by M3U account name, with unassociated streams last. |
 | `dispatcharr clear-epg` | Clear EPG mappings. |
-| `dispatcharr export` | Write all channels and TVG IDs to `/working/channels.csv`, replacing the previous export. |
+| `dispatcharr export` | Write all channels and TVG IDs to `~/StreamForge/channels.csv`, replacing the previous export. |
 | `dispatcharr all` | Run refresh, create/update, prune, match, renumber, and reorder in that order. |
 
 `all` waits for active accounts that expose refresh status. Export and Clear EPG are separate commands.
@@ -231,7 +186,7 @@ Both transcode commands accept a file or scan a directory recursively. Output mi
 | `--container=VALUE` | `STREAMFORGE_CONTAINER` | `keep`, `mkv`, `mp4`. Defaults to MKV for movies and source container for series. |
 | `--quality=VALUE` | `STREAMFORGE_QUALITY` | `script` (default), `balanced`, `high`, `compression`. |
 | `--hardware=VALUE` | `STREAMFORGE_HARDWARE` | `auto` (default), `cpu`, `nvidia`, `intel`, `amd`. |
-| `--jobs=N` | `STREAMFORGE_JOBS` | Override concurrent job count within available capacity. |
+| `--jobs=N` | `STREAMFORGE_JOBS` | Cap concurrent transcoding jobs and their aggregate CPU use in logical CPUs. |
 | `--resolution=WIDTHxHEIGHT` | `STREAMFORGE_RESOLUTION` | Resize video. Source dimensions are the default. |
 | `--frame-rate=FPS` | `STREAMFORGE_FRAME_RATE` | Set frame rate, such as `24` or `24000/1001`. |
 | `--aspect=W:H` | `STREAMFORGE_ASPECT` | Override display aspect ratio. |
@@ -240,7 +195,7 @@ Both transcode commands accept a file or scan a directory recursively. Output mi
 | `--convert-hdr` | `STREAMFORGE_CONVERT_HDR` | Tone-map HDR sources to SDR using CPU filters. |
 | `--delete-original` | `STREAMFORGE_DELETE_ORIGINAL` | Remove the source after successful conversion. Use `--yes` to approve. |
 
-CPU jobs default to half the available logical CPUs. GPU encoding defaults to one job, with an explicit job count capped at two. Stream copy retains the original video bitstream. HEVC 10-bit encoding can preserve static HDR metadata. Use stream copy to preserve dynamic HDR metadata. Incompatible stream and container combinations are reported.
+Jobs default to half the CPU capacity reported by Go, with a minimum of one. All FFmpeg and FFprobe processes in a batch share a Linux CPU affinity set limited by the job count and the process’s allowed CPUs. Stream copy retains the original video bitstream. HEVC 10-bit encoding can preserve static HDR metadata. Use stream copy to preserve dynamic HDR metadata. Incompatible stream and container combinations are reported.
 
 Standalone `strm` requires a playback parent. Set it for transcode runs to generate companions for processed output. When TMDB is configured, lookup can change the companion’s filename while the referenced media keeps its filename. Lookups that fail fall back to the media basename.
 
@@ -252,7 +207,7 @@ streamforge diagnostics --json
 streamforge diagnostics --json --save
 ~~~
 
-The report includes build information, runtime, service status, mounted paths, media dependencies, device access, and a sanitized summary of the current session log. `--save` writes the report under `/working` and prints its path. Session logs are named `streamforge-YYYYMMDD-HHMMSS.log` with a suffix when needed.
+The report includes build information, runtime, service status, application directories, media dependencies, device access, and a sanitized summary of the current session log. `--save` writes the report under `~/StreamForge` and prints its path. Session logs are named `streamforge-YYYYMMDD-HHMMSS.log` with a suffix when needed.
 
 ## Interactive menu
 
@@ -260,36 +215,26 @@ Choose **Continue with Defaults** or enter the settings available for the sessio
 
 Open **Downloads** and choose **Search movies** or **Search series**. The results show providers with match counts. Choose a provider to see its matching titles. Select a movie to toggle it in the queue. For a series match, choose **Add All Episodes to Download Queue** or toggle individual episodes and seasons. The shared **Download queue** lets you review or remove selections before choosing **Download Only** or **Download and Process**. If some providers fail, the provider menu still opens for available matches. During a transfer, use the arrows and X to cancel one active download, or Esc to cancel the batch.
 
-StreamForge saves queue changes in `/working/download-queue.yaml`. Items leave the queue when their video and playback link are ready, including processing if selected. Failed or cancelled items stay queued so you can retry them. The completion summary shows the batch outcome and the video, playback link, and player paths for completed items.
+StreamForge saves queue changes in `~/StreamForge/download-queue.yaml`. Items leave the queue when their video and playback link are ready, including processing if selected. Failed or cancelled items stay queued so you can retry them. The completion summary shows the batch outcome and the video, playback link, and player paths for completed items.
 
 **System Status** shows connectivity and tool availability and offers **Retry Connections**, **Copy Diagnostics**, and **Save diagnostics**. Clipboard copy uses the terminal when supported and saves a report otherwise.
 
 ## Media tools and GPU access
 
-FFmpeg and FFprobe come from the host. Use Linux binaries for the image architecture. Static builds are the simplest to mount. Dynamically linked builds also need a compatible loader and libraries. Enable the commented media mounts in [compose.yaml](compose.yaml), or pass them directly.
+FFmpeg and FFprobe are required for downloads and transcoding. Install both on `PATH`, or configure their absolute paths with `STREAMFORGE_FFMPEG` and `STREAMFORGE_FFPROBE`. FFmpeg needs the encoders you use and the `zscale` and `tonemap` filters for SDR conversion. Run `streamforge diagnostics` to check availability.
 
-~~~sh
-docker run --rm --read-only --user "$(id -u):$(id -g)" \
-  -v "$PWD/config:/config:ro" -v "$PWD/working:/working:rw" \
-  -v /opt/media/bin/ffmpeg:/usr/local/bin/ffmpeg:ro \
-  -v /opt/media/bin/ffprobe:/usr/local/bin/ffprobe:ro \
-  ghcr.io/kpirnie/streamforge:dev movies transcode movies --codec=hevc
-~~~
-
-The same binary mounts work with `podman run` and the rootless user mapping shown above. Choose builds with the encoders you use. SDR conversion requires the `zscale` and `tonemap` filters. Run `diagnostics` to check availability.
-
-For Intel or AMD, pass the applicable `/dev/dri/renderD*` node, the matching user-space driver, and the group that grants device access. The Compose example shows the device and supplementary group entries. For NVIDIA, configure the host’s NVIDIA container integration and expose the GPU using your runtime’s supported method. The selected FFmpeg binary needs the corresponding encoder. Unavailable hardware falls back to CPU when a compatible encoder is present.
+For Intel and AMD hardware encoding, the account running StreamForge needs access to the applicable `/dev/dri/renderD*` device and the matching driver. NVIDIA encoding requires a compatible driver and an accessible `/dev/nvidiactl`. If hardware encoding is unavailable, StreamForge can fall back to a compatible CPU encoder.
 
 ## SSH and cron
 
 Allocate a terminal for interactive SSH sessions. Pass an explicit subcommand and disable TTY allocation for scheduled work.
 
 ~~~sh
-ssh -t media-host 'cd /srv/streamforge && docker compose run --rm streamforge'
+ssh -t media-host '~/.local/bin/streamforge'
 ~~~
 
 ~~~cron
-15 3 * * * cd /srv/streamforge && docker compose run --rm -T streamforge dispatcharr export
+15 3 * * * "$HOME/.local/bin/streamforge" dispatcharr export
 ~~~
 
 ## License
