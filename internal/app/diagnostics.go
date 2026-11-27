@@ -93,7 +93,7 @@ func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]
 			file.Close()
 		}
 	}
-	for _, dir := range []string{"/config", "/working", "/working/input", "/working/output"} {
+	for _, dir := range applicationDirectories() {
 		file, err := os.Open(dir)
 		report.Mounts[dir] = "unavailable"
 		if err == nil {
@@ -105,7 +105,7 @@ func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]
 		}
 	}
 	for _, tool := range []string{"ffmpeg", "ffprobe"} {
-		binary := value("STREAMFORGE_"+strings.ToUpper(tool), "/usr/local/bin/"+tool)
+		binary := mediaExecutable(value, tool)
 		probe, cancel := context.WithTimeout(ctx, 3*time.Second)
 		data, err := exec.CommandContext(probe, binary, "-version").Output()
 		cancel()
@@ -118,7 +118,7 @@ func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]
 	report.Encoder = "unavailable"
 	report.Capabilities = make(map[string]bool)
 	if report.Dependencies["ffmpeg"] != "unavailable" {
-		binary := value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg")
+		binary := mediaExecutable(value, "ffmpeg")
 		probe, cancel := context.WithTimeout(ctx, 3*time.Second)
 		encoders, _ := exec.CommandContext(probe, binary, "-hide_banner", "-encoders").Output()
 		cancel()
@@ -278,7 +278,7 @@ func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *
 		for _, name := range []string{"/dev/nvidiactl", "/dev/dri/renderD128"} {
 			fmt.Fprintf(&text, "%s accessible: %t\n", name, report.Devices[name])
 		}
-		for _, name := range []string{"/config", "/working", "/working/input", "/working/output"} {
+		for _, name := range applicationDirectories() {
 			fmt.Fprintf(&text, "%s: %s\n", name, report.Mounts[name])
 		}
 		for _, warning := range report.Warnings {

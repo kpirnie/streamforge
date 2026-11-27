@@ -16,10 +16,10 @@ func DestinationSpace(root *os.Root, tree string, required bool) (uint64, error)
 	if tree != "input" && tree != "output" {
 		return 0, errors.New("invalid media destination")
 	}
-	dir := filepath.Join(Working, tree)
+	dir := filepath.Join(root.Name(), tree)
 	info, err := root.Lstat(tree)
 	if errors.Is(err, os.ErrNotExist) && !required {
-		dir = Working
+		dir = root.Name()
 	} else if err != nil || !info.IsDir() {
 		return 0, errors.New("media destination must be a real directory")
 	}

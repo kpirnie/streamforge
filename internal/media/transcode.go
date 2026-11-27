@@ -64,7 +64,7 @@ func (c Conversion) Validate() error {
 	}
 	for _, binary := range []string{c.FFmpeg, c.FFprobe} {
 		if !filepath.IsAbs(binary) {
-			return errors.New("FFmpeg and FFprobe paths must be absolute")
+			return errors.New("ffmpeg and ffprobe are required on PATH or at absolute STREAMFORGE_FFMPEG and STREAMFORGE_FFPROBE paths")
 		}
 		info, err := os.Stat(binary)
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {

@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,11 +27,12 @@ import (
 	"github.com/kpirnie/streamforge/internal/xtream"
 )
 
-const workDir = media.Working
-
 // Run starts the interactive terminal or runs a single command.
 func Run(ctx context.Context, args []string, revision, date string) error {
 	buildRevision, buildDate = revision, date
+	if err := initializePaths(); err != nil {
+		return err
+	}
 	if len(args) == 0 && terminalAvailable(os.Stdin) && terminalAvailable(os.Stdout) {
 		return runTerminal(ctx)
 	}
@@ -231,7 +233,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 	}
 	parent := value("STREAMFORGE_PLAYBACK_PARENT", "")
 	if !dryRun && (service == "strm" || ((service == "series" || service == "movies") && (action == "download" || action == "transcode")) || (service == "dispatcharr" && action == "export")) {
-		if root, err := os.OpenRoot(workDir); err == nil {
+		if root, err := os.OpenRoot(media.Working); err == nil {
 			cleanupErr := media.CleanTemporary(root)
 			root.Close()
 			if cleanupErr != nil {
@@ -256,7 +258,7 @@ func runCommand(ctx context.Context, args []string, logs *os.File, out, stderr i
 			providers, err = providerCache.providers, providerCache.err
 		} else {
 			var warnings []error
-			providers, warnings, err = xtream.LoadProviders("/config/providers.json", agent, timeout, transport)
+			providers, warnings, err = xtream.LoadProviders(filepath.Join(configDir, "providers.json"), agent, timeout, transport)
 			for _, warning := range warnings {
 				message("WARN", stderr, "%s", warning)
 			}
@@ -387,7 +389,7 @@ func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action stri
 		report("Requested Dispatcharr M3U refresh")
 		return nil
 	case "export":
-		root, err := os.OpenRoot(workDir)
+		root, err := os.OpenRoot(media.Working)
 		if err != nil {
 			return err
 		}
@@ -397,9 +399,9 @@ func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action stri
 			return err
 		}
 		if dryRun {
-			report("Would export %d channels to /working/channels.csv", count)
+			report("Would export %d channels to %s", count, filepath.Join(media.Working, "channels.csv"))
 		} else {
-			report("Exported %d channels to /working/channels.csv", count)
+			report("Exported %d channels to %s", count, filepath.Join(media.Working, "channels.csv"))
 		}
 		return nil
 	case "prune":
@@ -428,12 +430,13 @@ func runDispatcharr(ctx context.Context, client *dispatcharr.Client, action stri
 
 func readEnvironment() (map[string]string, error) {
 	settings := make(map[string]string)
-	file, err := os.Open("/config/.env")
+	path := filepath.Join(configDir, ".env")
+	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return settings, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open /config/.env: %w", err)
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
@@ -466,7 +469,7 @@ func readEnvironment() (map[string]string, error) {
 }
 
 func openLog() (*os.File, error) {
-	stem := workDir + "/streamforge-" + time.Now().Format("20060102-150405")
+	stem := filepath.Join(media.Working, "streamforge-"+time.Now().Format("20060102-150405"))
 	for i := 0; ; i++ {
 		path := stem + ".log"
 		if i > 0 {

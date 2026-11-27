@@ -12,6 +12,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -172,7 +173,7 @@ func runTerminal(ctx context.Context) error {
 	verify = err != nil || verify
 	providerTransport := makeTransport(timeout, verify)
 	defer providerTransport.CloseIdleConnections()
-	providers, warnings, providerErr := xtream.LoadProviders("/config/providers.json", startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, providerTransport)
+	providers, warnings, providerErr := xtream.LoadProviders(filepath.Join(configDir, "providers.json"), startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, providerTransport)
 	providerCache := &cachedProviders{providers: providers, err: providerErr, titles: media.NewTitles(startupValue("TMDB_API_KEY", ""), startupValue("STREAMFORGE_USER_AGENT", "VLC/3.0.20 LibVLC/3.0.20"), timeout, providerTransport, func(format string, args ...any) {
 		fmt.Fprintf(session, "%s WARN %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
 	})}

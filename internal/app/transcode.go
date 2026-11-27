@@ -30,8 +30,8 @@ type downloadedMedia struct {
 
 func runTranscode(ctx context.Context, args []string, series bool, downloads map[string]downloadedMedia, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress, finishItem func(string) error) error {
 	profile := media.Conversion{
-		FFmpeg:     value("STREAMFORGE_FFMPEG", "/usr/local/bin/ffmpeg"),
-		FFprobe:    value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe"),
+		FFmpeg:     mediaExecutable(value, "ffmpeg"),
+		FFprobe:    mediaExecutable(value, "ffprobe"),
 		Codec:      value("STREAMFORGE_CODEC", "hevc"),
 		Container:  value("STREAMFORGE_CONTAINER", "keep"),
 		Quality:    value("STREAMFORGE_QUALITY", "script"),
@@ -166,7 +166,7 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 	var estimate uint64
 	for _, input := range files {
 		if !strings.HasPrefix(input, "input/") {
-			return errors.New("transcode sources must be under /working/input")
+			return fmt.Errorf("transcode sources must be under %s", filepath.Join(media.Working, "input"))
 		}
 		info, err := root.Lstat(input)
 		if err != nil {

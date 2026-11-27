@@ -18,14 +18,14 @@ import (
 	"syscall"
 )
 
-// Working is the configured container mount for media and operational output.
-const Working = "/working"
+// Working is the media and operational output directory selected at startup.
+var Working string
 
 // Files resolves an input or output media path and enumerates regular media files.
 func Files(root *os.Root, target string, exclusions []string) ([]string, error) {
 	if filepath.IsAbs(target) {
 		var err error
-		target, err = filepath.Rel(Working, target)
+		target, err = filepath.Rel(root.Name(), target)
 		if err != nil {
 			return nil, err
 		}
@@ -34,7 +34,7 @@ func Files(root *os.Root, target string, exclusions []string) ([]string, error) 
 	}
 	target = filepath.Clean(target)
 	if !filepath.IsLocal(target) || (target != "input" && target != "output" && !strings.HasPrefix(target, "input/") && !strings.HasPrefix(target, "output/")) {
-		return nil, errors.New("media paths must be inside /working/input or /working/output")
+		return nil, fmt.Errorf("media paths must be inside %s or %s", filepath.Join(root.Name(), "input"), filepath.Join(root.Name(), "output"))
 	}
 	for _, pattern := range exclusions {
 		if _, err := filepath.Match(pattern, ""); err != nil {

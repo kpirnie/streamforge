@@ -103,7 +103,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	}
 	if available == 0 || estimated > available {
 		if !yes && !dryRun {
-			return errors.New("insufficient space in /working/input; use --yes to attempt the download")
+			return fmt.Errorf("insufficient space in %s; use --yes to attempt the download", filepath.Join(media.Working, "input"))
 		}
 	}
 	if unknownSize {
@@ -118,9 +118,9 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 		report("Would consider %d items for download, %d invalid metadata entries", len(paths), invalid)
 		return errors.Join(failures...)
 	}
-	ffprobe := value("STREAMFORGE_FFPROBE", "/usr/local/bin/ffprobe")
+	ffprobe := mediaExecutable(value, "ffprobe")
 	if !filepath.IsAbs(ffprobe) {
-		return errors.New("FFprobe path must be absolute")
+		return errors.New("ffprobe is required on PATH or at an absolute STREAMFORGE_FFPROBE path")
 	}
 	probe, err := os.Stat(ffprobe)
 	if err != nil || !probe.Mode().IsRegular() || probe.Mode().Perm()&0111 == 0 {

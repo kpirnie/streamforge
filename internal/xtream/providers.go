@@ -49,7 +49,7 @@ func LoadProviders(path, agent string, timeout time.Duration, transport http.Rou
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil, errors.New("Xtream providers require /config/providers.json")
+			return nil, nil, fmt.Errorf("Xtream providers require %s", path)
 		}
 		return nil, nil, errors.New("could not open Xtream provider configuration")
 	}
