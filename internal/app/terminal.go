@@ -36,6 +36,12 @@ func (b *terminalBuffer) Write(data []byte) (int, error) {
 }
 
 func runTerminal(ctx context.Context) error {
+	var updateNotice string
+	defer func() {
+		if updateNotice != "" {
+			fmt.Fprintln(os.Stdout, updateNotice)
+		}
+	}()
 	restoreTerminal, err := terminalMode()
 	if err != nil {
 		return err
@@ -104,6 +110,8 @@ func runTerminal(ctx context.Context) error {
 	}
 	refreshProviders()
 	defer func() { providerTransport.CloseIdleConnections() }()
+	available := make(chan *availableUpdate, 1)
+	go func() { available <- checkForUpdate(ctx, buildTag) }()
 	startup := make(chan statusReport, 1)
 	go func() { startup <- diagnosticStatus(ctx, session) }()
 	splash := time.NewTimer(5 * time.Second)
@@ -123,6 +131,23 @@ func runTerminal(ctx context.Context) error {
 	inputContext, stopInput := context.WithCancel(ctx)
 	defer stopInput()
 	keys := terminalInput(inputContext, os.Stdin)
+	if update := <-available; update != nil && confirmUpdate(ctx, keys, update.tag) {
+		width, height := terminalDimensions()
+		drawTerminal(os.Stdout, width, height, []string{"StreamForge update", "", "Installing " + update.tag + "…"}, "Ctrl+C Cancel")
+		queued, err := update.install(ctx)
+		if err == nil {
+			if queued {
+				updateNotice = "StreamForge is closing to apply the update."
+			} else {
+				updateNotice = fmt.Sprintf("Updated StreamForge to %s. Launch it again to use the new version.", update.tag)
+			}
+			return nil
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		status.Findings = append([]string{"Update failed: " + err.Error()}, status.Findings...)
+	}
 	redraw := time.NewTicker(250 * time.Millisecond)
 	defer redraw.Stop()
 	page, mode, filter, input := "Main", "menu", "", ""
@@ -547,5 +572,31 @@ func supportsClipboard() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func confirmUpdate(ctx context.Context, keys <-chan string, tag string) bool {
+	width, height := terminalDimensions()
+	drawTerminal(os.Stdout, width, height, []string{
+		"StreamForge update",
+		"",
+		fmt.Sprintf("%s is installed. %s is available.", buildTag, tag),
+		"Update now?",
+	}, "Y Update   Enter / Esc Skip")
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case key, ok := <-keys:
+			if !ok {
+				return false
+			}
+			switch key {
+			case "text:Y", "text:y":
+				return true
+			case "enter", "escape", "text:N", "text:n":
+				return false
+			}
+		}
 	}
 }

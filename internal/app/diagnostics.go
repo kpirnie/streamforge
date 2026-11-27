@@ -29,6 +29,7 @@ import (
 
 var buildRevision string
 var buildDate string
+var buildTag string
 
 type statusReport struct {
 	Version      string            `json:"version"`
@@ -73,6 +74,9 @@ func diagnosticStatus(ctx context.Context, logFile *os.File) statusReport {
 	}
 	if buildRevision != "" && buildRevision != "unknown" {
 		report.Commit = buildRevision
+	}
+	if buildTag != "" {
+		report.Version = buildTag
 	}
 	if buildDate != "" {
 		report.Built = buildDate

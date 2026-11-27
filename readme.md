@@ -42,7 +42,7 @@ Set `STREAMFORGE_BIN_DIR` before running either bootstrapper to change the insta
 
 Pushes to `develop` refresh the public [beta prerelease](https://github.com/kpirnie/streamforge/releases/tag/beta). Pushing a version tag publishes a stable release. The bootstrapper installs the latest stable release by default. Set `STREAMFORGE_RELEASE=beta` for the rolling beta, or select a version tag from the [releases page](https://github.com/kpirnie/streamforge/releases).
 
-Run `streamforge` in a terminal to open the interactive menu, or run `streamforge --help` for commands. Windows release executables include the StreamForge icon. The `--icon` option writes the embedded PNG to standard output.
+Run `streamforge` in a terminal to open the interactive menu, or run `streamforge --help` for commands. Stable builds from version tags such as `v1.2.3` check GitHub for a newer stable release at launch. The interactive menu asks before installing an update. One-shot commands report available updates on standard error. After installing an update, launch StreamForge again. Windows release executables include the StreamForge icon. The `--icon` option writes the embedded PNG to standard output.
 
 ### Build from source
 
@@ -112,7 +112,7 @@ Open **Reconfigure → Xtream providers** to manage providers. The provider name
 
 | Option | Effect |
 | --- | --- |
-| `--help`, `-h` | Print usage without contacting a service. |
+| `--help`, `-h` | Print usage. |
 | `--verbose`, `-v` | Add debug detail to terminal and session logs. |
 | `--dry-run` | Preview using the current data without applying changes. A regular session log is still written. |
 | `--yes`, `-y` | Approve protected changes or proceed past the applicable disk-space check. |

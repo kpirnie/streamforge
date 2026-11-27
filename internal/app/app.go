@@ -28,8 +28,8 @@ import (
 )
 
 // Run starts the interactive terminal or runs a single command.
-func Run(ctx context.Context, args []string, revision, date string) error {
-	buildRevision, buildDate = revision, date
+func Run(ctx context.Context, args []string, revision, date, tag string) error {
+	buildRevision, buildDate, buildTag = revision, date, tag
 	if err := initializeConfigDir(); err != nil {
 		return err
 	}
@@ -48,6 +48,9 @@ func Run(ctx context.Context, args []string, revision, date string) error {
 	}
 	if len(args) == 0 && terminalAvailable(os.Stdin) && terminalAvailable(os.Stdout) {
 		return runTerminal(ctx)
+	}
+	if update := checkForUpdate(ctx, tag); update != nil {
+		fmt.Fprintf(os.Stderr, "StreamForge %s is available. Open the interactive menu to update.\n", update.tag)
 	}
 	return runCommand(ctx, args, nil, os.Stdout, os.Stderr, nil, nil, nil)
 }

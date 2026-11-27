@@ -18,6 +18,7 @@ import (
 
 var buildRevision string
 var buildDate string
+var buildTag string
 
 //go:embed docs/assets/streamforge-app-icon.png
 var appIcon []byte
@@ -33,7 +34,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := app.Run(ctx, os.Args[1:], buildRevision, buildDate); err != nil {
+	if err := app.Run(ctx, os.Args[1:], buildRevision, buildDate, buildTag); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
