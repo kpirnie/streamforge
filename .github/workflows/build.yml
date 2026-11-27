@@ -69,22 +69,20 @@ jobs:
             echo "A newer develop commit is available. Skipping this beta build."
             exit 0
           fi
-          ref_api="repos/$GITHUB_REPOSITORY/git/refs"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/beta" >/dev/null 2>&1; then
-            gh api --method PATCH "$ref_api/tags/beta" -f sha="$GITHUB_SHA" -F force=true >/dev/null
-          else
-            gh api --method POST "$ref_api" -f ref=refs/tags/beta -f sha="$GITHUB_SHA" >/dev/null
+          if ! immutable=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/beta" --jq .immutable); then
+            echo "::warning::Publish an initial mutable beta prerelease before enabling refreshes."
+            exit 0
           fi
-          notes="Rolling prerelease from develop at $GITHUB_SHA."
-          if gh release view beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload beta release/streamforge-* release/bootstrap.* --clobber --repo "$GITHUB_REPOSITORY"
-            gh release upload beta release/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit beta --repo "$GITHUB_REPOSITORY" --title beta --notes "$notes" \
-              --draft=false --prerelease --latest=false
-          else
-            gh release create beta release/* --repo "$GITHUB_REPOSITORY" --verify-tag \
-              --title beta --notes "$notes" --prerelease --latest=false
+          if [[ "$immutable" != false ]]; then
+            echo "::error::The beta prerelease must be mutable."
+            exit 1
           fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/beta" \
+            -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          gh release upload beta release/streamforge-* release/bootstrap.* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload beta release/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit beta --repo "$GITHUB_REPOSITORY" --title beta --prerelease --latest=false \
+            --notes "Rolling prerelease from develop at $GITHUB_SHA."
 
       - name: Publish stable release
         if: github.ref_type == 'tag'
