@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 )
 
 // Stream describes the media stream attributes used for validation and conversion.
@@ -32,14 +31,11 @@ type Stream struct {
 
 // Probe validates a media file with the host-mounted FFprobe executable.
 func Probe(ctx context.Context, binary string, file *os.File) ([]Stream, error) {
-	command := exec.CommandContext(ctx, binary, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_name,codec_type,color_transfer,pix_fmt,color_primaries,color_space,color_range:stream_side_data:stream_disposition=attached_pic:stream_tags=language", "-of", "json", "/proc/self/fd/3")
+	command := mediaCommand(ctx, binary, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_name,codec_type,color_transfer,pix_fmt,color_primaries,color_space,color_range:stream_side_data:stream_disposition=attached_pic:stream_tags=language", "-of", "json", "/proc/self/fd/3")
 	command.ExtraFiles = []*os.File{file}
 	output, err := command.Output()
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, errors.New("FFprobe could not read media")
+		return nil, mediaCommandError(ctx, err, "FFprobe could not read media")
 	}
 	var result struct {
 		Streams []Stream `json:"streams"`

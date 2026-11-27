@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -116,9 +115,9 @@ func (c Conversion) Target(input string) (string, string) {
 
 // EncoderInventory detects available FFmpeg video encoders once per batch.
 func (c Conversion) EncoderInventory(ctx context.Context) (string, error) {
-	output, err := exec.CommandContext(ctx, c.FFmpeg, "-hide_banner", "-encoders").Output()
+	output, err := mediaCommand(ctx, c.FFmpeg, "-hide_banner", "-encoders").Output()
 	if err != nil {
-		return "", errors.New("could not query FFmpeg encoders")
+		return "", mediaCommandError(ctx, err, "could not query FFmpeg encoders")
 	}
 	return string(output), nil
 }
@@ -234,6 +233,9 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		}
 		existing, err := Probe(ctx, c.FFprobe, output)
 		output.Close()
+		if errors.Is(err, errCPUEnforcement) {
+			return "", false, 0, err
+		}
 		if err == nil {
 			videoMatches := codec == "copy"
 			for _, stream := range existing {
@@ -326,7 +328,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		if errors.Is(err, errSeriesNoSavings) || (errors.Is(err, os.ErrExist) && !c.Force && subtitle == nil) {
 			return current, true, i, nil
 		}
-		if i == len(attempts)-1 {
+		if i == len(attempts)-1 || errors.Is(err, errCPUEnforcement) {
 			return current, false, i, err
 		}
 	}
@@ -480,16 +482,13 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 		args = append(args, "-max_muxing_queue_size", "9999")
 	}
 	args = append(args, "-f", muxer, "/proc/self/fd/4")
-	command := exec.CommandContext(ctx, c.FFmpeg, args...)
+	command := mediaCommand(ctx, c.FFmpeg, args...)
 	command.ExtraFiles = []*os.File{input, output}
 	if subtitle != nil {
 		command.ExtraFiles = append(command.ExtraFiles, subtitle)
 	}
 	if err := command.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return errors.New("FFmpeg could not encode the selected streams in the output container")
+		return mediaCommandError(ctx, err, "FFmpeg could not encode the selected streams in the output container")
 	}
 	return nil
 }

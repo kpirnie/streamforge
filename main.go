@@ -12,12 +12,14 @@ import (
 	"syscall"
 
 	"github.com/kpirnie/streamforge/internal/app"
+	"github.com/kpirnie/streamforge/internal/media"
 )
 
 var buildRevision string
 var buildDate string
 
 func main() {
+	media.RunCPULaunch(os.Args[1:])
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := app.Run(ctx, os.Args[1:], buildRevision, buildDate); err != nil {

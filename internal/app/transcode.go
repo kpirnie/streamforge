@@ -115,14 +115,12 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 	}
 	capacity := max(runtime.GOMAXPROCS(0), 1)
 	parallel := max(1, capacity/2)
-	budget := parallel
 	if jobs != "" {
 		count, err := strconv.Atoi(jobs)
 		if err != nil || count < 1 {
 			return errors.New("transcode jobs must be a positive integer")
 		}
-		parallel = min(count, capacity)
-		budget = capacity
+		parallel = count
 	}
 	root, err := os.OpenRoot(media.Working)
 	if err != nil {
@@ -214,30 +212,19 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 			return err
 		}
 	}
+	ctx, err = media.WithCPUCap(ctx, parallel)
+	if err != nil {
+		return err
+	}
 	encoders, err := profile.EncoderInventory(ctx)
 	if err != nil {
 		return err
 	}
-	preferred := false
-	for _, item := range queue {
-		if item.profile.PreferredEncoder(encoders) != "" {
-			preferred = true
-			break
-		}
-	}
-	if preferred {
-		cap := 1
-		if jobs != "" {
-			cap = 2
-		}
-		parallel = min(parallel, cap)
-	}
-	threads := max(1, budget/parallel)
 	var mu sync.Mutex
 	progress.setTotal(len(queue))
 	var failures, postFailures []error
 	var done, skipped, cancelled, retries int
-	workers := make(chan struct{}, parallel)
+	workers := make(chan struct{}, min(parallel, len(queue)))
 	var wait sync.WaitGroup
 	for index, item := range queue {
 		if ctx.Err() != nil {
@@ -251,7 +238,7 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 			defer func() { <-workers }()
 			progress.status(fmt.Sprintf("Processing media item %d", index+1))
 			_, finish := progress.begin(ctx, "")
-			item.profile.Threads = threads
+			item.profile.Threads = 1
 			encoder, skip, attempts, err := item.profile.Convert(ctx, root, item.input, item.output, item.muxer, encoders)
 			var companionErr, deleteErr error
 			var companion string
