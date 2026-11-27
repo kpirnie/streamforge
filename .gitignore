@@ -75,6 +75,7 @@ settings/
 # ---------------------------------------------------------------------------
 
 # Compiled binary (set this to the project's binary name)
+streamforge_windows_*.syso
 # {{BINARY_NAME}}
 
 # Node (libraries only, applications should commit their lockfile)

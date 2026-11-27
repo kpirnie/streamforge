@@ -21,27 +21,42 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: false
 
-      - name: Build Linux release assets
+      - name: Build release assets
         env:
           CGO_ENABLED: '0'
-          GOOS: linux
           GOARM: '5'
         run: |
           mkdir release
           built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          for arch in 386 amd64 arm arm64 loong64 mips mips64 mips64le mipsle ppc64 ppc64le riscv64 s390x; do
-            GOARCH="$arch" go build -trimpath \
+          build() {
+            local os=$1 arch=$2 suffix=
+            if [[ "$os" == windows ]]; then
+              suffix=.exe
+              go run ./internal/winicon "$arch" "streamforge_windows_$arch.syso"
+            fi
+            GOOS="$os" GOARCH="$arch" go build -trimpath \
               -ldflags "-s -w -X main.buildRevision=$GITHUB_SHA -X main.buildDate=$built" \
-              -o "release/streamforge-linux-$arch" .
+              -o "release/streamforge-$os-$arch$suffix" .
+          }
+          for arch in 386 amd64 arm arm64 loong64 mips mips64 mips64le mipsle ppc64 ppc64le riscv64 s390x; do
+            build linux "$arch"
           done
-          cp bootstrap.sh release/
+          for arch in amd64 arm64; do
+            build darwin "$arch"
+          done
+          for arch in 386 amd64 arm64; do
+            build windows "$arch"
+          done
+          cp bootstrap.sh bootstrap.ps1 release/
           cd release
-          sha256sum streamforge-* bootstrap.sh > SHA256SUMS
+          sha256sum streamforge-* bootstrap.sh bootstrap.ps1 > SHA256SUMS
 
       - name: Publish release
         env:

@@ -10,11 +10,13 @@
 [![Kevin Pirnie](https://img.shields.io/badge/-KevinPirnie.com-000d2d?style=for-the-badge&labelColor=000&logoColor=white&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIxLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgPGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiLz4KICA8ZWxsaXBzZSBjeD0iMTIiIGN5PSIxMiIgcng9IjQuNSIgcnk9IjEwIi8+CiAgPGxpbmUgeDE9IjIiIHkxPSIxMiIgeDI9IjIyIiB5Mj0iMTIiLz4KICA8bGluZSB4MT0iNC41IiB5MT0iNi41IiB4Mj0iMTkuNSIgeTI9IjYuNSIvPgogIDxsaW5lIHgxPSI0LjUiIHkxPSIxNy41IiB4Mj0iMTkuNSIgeTI9IjE3LjUiLz4KPC9zdmc+Cg==)](https://kevinpirnie.com/)
 
 
-Stream Forge is a Linux terminal application for administering Dispatcharr and Emby, downloading Xtream movies and series, transcoding media, and generating `.strm` companions. Run it with no arguments in a terminal for the interactive menu. Pass a command for a single operation, a script, or a cron job.
+Stream Forge is a terminal application for Linux, macOS, and Windows. It supports administering Dispatcharr and Emby, downloading Xtream movies and series, transcoding media, and generating `.strm` companions. Run it with no arguments in a terminal for the interactive menu. Pass a command for a single operation, a script, or a cron job.
 
-## Install on Linux
+## Install
 
-Download and run the bootstrapper as your regular user. It checks that both `ffmpeg` and `ffprobe` run from `PATH`, then verifies the release checksum and installs StreamForge.
+Download and run the bootstrapper as your regular user. It checks that both `ffmpeg` and `ffprobe` run from `PATH`, then verifies the release checksum and installs StreamForge. Builds for macOS and Windows require FFmpeg tools that include the `fd` protocol.
+
+### Linux and macOS
 
 ~~~sh
 curl -fsSLO https://raw.githubusercontent.com/kpirnie/streamforge/main/bootstrap.sh
@@ -22,11 +24,25 @@ sh bootstrap.sh
 ~/.local/bin/streamforge
 ~~~
 
-The default install location is `~/.local/bin`. Set `STREAMFORGE_BIN_DIR` to install elsewhere. The installer selects the correct Linux architecture. Each binary is statically linked and works on glibc and musl distributions.
+The shell bootstrapper installs to `~/.local/bin`. Linux binaries are statically linked and work on glibc and musl distributions. macOS builds are available for Intel and Apple silicon.
+
+### Windows
+
+~~~powershell
+Invoke-WebRequest https://raw.githubusercontent.com/kpirnie/streamforge/main/bootstrap.ps1 -OutFile bootstrap.ps1
+.\bootstrap.ps1
+& "$env:LOCALAPPDATA\StreamForge\bin\streamforge.exe"
+~~~
+
+The PowerShell bootstrapper installs to `%LOCALAPPDATA%\StreamForge\bin`. It selects the x86, x64, or ARM64 build. Use a workspace on a filesystem that supports hard links, such as NTFS, for atomic media publication.
+
+### Release channels
+
+Set `STREAMFORGE_BIN_DIR` before running either bootstrapper to change the install location.
 
 Pushes to `main` publish prereleases tagged `beta-<commit SHA>`. Pushing a version tag publishes a stable release. The bootstrapper installs the latest stable release by default. Set `STREAMFORGE_RELEASE` to a tag from the [releases page](https://github.com/kpirnie/streamforge/releases) to install a specific stable or beta build.
 
-Run `streamforge` in a terminal to open the interactive menu, or run `streamforge --help` for commands. Use `streamforge --icon > streamforge.png` to export the embedded app icon.
+Run `streamforge` in a terminal to open the interactive menu, or run `streamforge --help` for commands. Windows release executables include the StreamForge icon. The `--icon` option writes the embedded PNG to standard output.
 
 ### Build from source
 
@@ -37,14 +53,16 @@ CGO_ENABLED=0 go build -trimpath -o streamforge .
 ./streamforge --help
 ~~~
 
+For a Windows source build with the Explorer icon, run `go run ./internal/winicon amd64 streamforge_windows_amd64.syso` before building. Use the target architecture in both arguments.
+
 ## Files and permissions
 
-On Linux, the configuration directory defaults to `~/.config/streamforge` and follows `XDG_CONFIG_HOME` when set. Copy [.env.example](.env.example) or [providers.json.example](providers.json.example) there for the services you use. The workspace defaults to `~/StreamForge`. Set `STREAMFORGE_WORK_DIR` in the process environment to an absolute path to use an existing media workspace.
+The configuration directory is `~/.config/streamforge` on Linux, `~/Library/Application Support/streamforge` on macOS, and `%APPDATA%\streamforge` on Windows. Linux follows `XDG_CONFIG_HOME` when set. Copy [.env.example](.env.example) or [providers.json.example](providers.json.example) there for the services you use. The workspace defaults to `~/StreamForge`. Set `STREAMFORGE_WORK_DIR` in the process environment to an absolute path to use an existing media workspace.
 
 | Path | Contents |
 | --- | --- |
-| `~/.config/streamforge/.env` | Optional service credentials and application settings. |
-| `~/.config/streamforge/providers.json` | Read-only Xtream provider definitions. |
+| `.env` in the configuration directory | Optional service credentials and application settings. |
+| `providers.json` in the configuration directory | Read-only Xtream provider definitions. |
 | `~/StreamForge/input` | Source media and completed provider downloads. |
 | `~/StreamForge/output` | Processed media and `.strm` companions. |
 | `~/StreamForge/download-queue.yaml` | Pending terminal download selections, restored on startup. |
@@ -56,7 +74,7 @@ For playback paths, set `STREAMFORGE_PLAYBACK_PARENT` to the absolute directory 
 
 ## Configuration
 
-Command-line options override corresponding environment settings. Process environment values override `~/.config/streamforge/.env`. The interactive setup offers session values for eligible unset settings. Credentials use the environment, `~/.config/streamforge/.env`, or eligible interactive prompts.
+Command-line options override corresponding environment settings. Process environment values override `.env` in the configuration directory. The interactive setup offers session values for eligible unset settings. Credentials use the environment, `.env`, or eligible interactive prompts.
 
 | Variable | Purpose |
 | --- | --- |
@@ -195,7 +213,7 @@ Both transcode commands accept a file or scan a directory recursively. Output mi
 | `--convert-hdr` | `STREAMFORGE_CONVERT_HDR` | Tone-map HDR sources to SDR using CPU filters. |
 | `--delete-original` | `STREAMFORGE_DELETE_ORIGINAL` | Remove the source after successful conversion. Use `--yes` to approve. |
 
-Jobs default to half the CPU capacity reported by Go, with a minimum of one. All FFmpeg and FFprobe processes in a batch share a Linux CPU affinity set limited by the job count and the process’s allowed CPUs. Stream copy retains the original video bitstream. HEVC 10-bit encoding can preserve static HDR metadata. Use stream copy to preserve dynamic HDR metadata. Incompatible stream and container combinations are reported.
+Jobs default to half the CPU capacity reported by Go, with a minimum of one. Linux confines media commands to a shared CPU affinity set. Windows applies the shared CPU budget through a Job Object. macOS accepts a transcode job budget at least as large as the host’s logical CPU count. Set `STREAMFORGE_JOBS` to the output of `sysctl -n hw.logicalcpu` to enable transcoding. Smaller budgets fail before FFmpeg starts because macOS does not provide the same hard CPU cap. Stream copy retains the original video bitstream. HEVC 10-bit encoding can preserve static HDR metadata. Use stream copy to preserve dynamic HDR metadata. Incompatible stream and container combinations are reported.
 
 Standalone `strm` requires a playback parent. Set it for transcode runs to generate companions for processed output. When TMDB is configured, lookup can change the companion’s filename while the referenced media keeps its filename. Lookups that fail fall back to the media basename.
 
@@ -223,7 +241,7 @@ StreamForge saves queue changes in `~/StreamForge/download-queue.yaml`. Items le
 
 FFmpeg and FFprobe are required for downloads and transcoding. Install both on `PATH`, or configure their absolute paths with `STREAMFORGE_FFMPEG` and `STREAMFORGE_FFPROBE`. FFmpeg needs the encoders you use and the `zscale` and `tonemap` filters for SDR conversion. Run `streamforge diagnostics` to check availability.
 
-For Intel and AMD hardware encoding, the account running StreamForge needs access to the applicable `/dev/dri/renderD*` device and the matching driver. NVIDIA encoding requires a compatible driver and an accessible `/dev/nvidiactl`. If hardware encoding is unavailable, StreamForge can fall back to a compatible CPU encoder.
+On Linux, for Intel and AMD hardware encoding, the account running StreamForge needs access to the applicable `/dev/dri/renderD*` device and the matching driver. NVIDIA encoding requires a compatible driver and an accessible `/dev/nvidiactl`. StreamForge uses software encoding on macOS and Windows. If Linux hardware encoding is unavailable, StreamForge can fall back to a compatible CPU encoder.
 
 ## SSH and cron
 
