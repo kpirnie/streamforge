@@ -40,7 +40,7 @@ The PowerShell bootstrapper installs to `%LOCALAPPDATA%\StreamForge\bin`. It sel
 
 Set `STREAMFORGE_BIN_DIR` before running either bootstrapper to change the install location.
 
-Pushes to `main` publish prereleases tagged `beta-<commit SHA>`. Pushing a version tag publishes a stable release. The bootstrapper installs the latest stable release by default. Set `STREAMFORGE_RELEASE` to a tag from the [releases page](https://github.com/kpirnie/streamforge/releases) to install a specific stable or beta build.
+Pushes to `develop` refresh the public [beta prerelease](https://github.com/kpirnie/streamforge/releases/tag/beta). Pushing a version tag publishes a stable release. The bootstrapper installs the latest stable release by default. Set `STREAMFORGE_RELEASE=beta` for the rolling beta, or select a version tag from the [releases page](https://github.com/kpirnie/streamforge/releases).
 
 Run `streamforge` in a terminal to open the interactive menu, or run `streamforge --help` for commands. Windows release executables include the StreamForge icon. The `--icon` option writes the embedded PNG to standard output.
 

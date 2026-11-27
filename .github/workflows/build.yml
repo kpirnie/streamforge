@@ -2,16 +2,17 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
     tags:
       - '**'
+      - '!beta'
       - '!beta-*'
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}-${{ github.sha }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -58,25 +59,45 @@ jobs:
           cd release
           sha256sum streamforge-* bootstrap.sh bootstrap.ps1 > SHA256SUMS
 
-      - name: Publish release
+      - name: Refresh rolling beta
+        if: github.ref == 'refs/heads/develop'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$GITHUB_REF_TYPE" == branch ]]; then
-            tag="beta-$GITHUB_SHA"
-            options=(--target "$GITHUB_SHA" --prerelease)
-            latest=--latest=false
-          else
-            tag="$GITHUB_REF_NAME"
-            options=(--verify-tag)
-            latest=--latest
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/develop" --jq .object.sha)
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo "A newer develop commit is available. Skipping this beta build."
+            exit 0
           fi
+          ref_api="repos/$GITHUB_REPOSITORY/git/refs"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/beta" >/dev/null 2>&1; then
+            gh api --method PATCH "$ref_api/tags/beta" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh api --method POST "$ref_api" -f ref=refs/tags/beta -f sha="$GITHUB_SHA" >/dev/null
+          fi
+          notes="Rolling prerelease from develop at $GITHUB_SHA."
+          if gh release view beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload beta release/streamforge-* release/bootstrap.* --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload beta release/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit beta --repo "$GITHUB_REPOSITORY" --title beta --notes "$notes" \
+              --draft=false --prerelease --latest=false
+          else
+            gh release create beta release/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title beta --notes "$notes" --prerelease --latest=false
+          fi
+
+      - name: Publish stable release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
           if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>&1); then
             if [[ "$draft" == true ]]; then
               gh release upload "$tag" release/* --clobber --repo "$GITHUB_REPOSITORY"
-              gh release edit "$tag" --draft=false "$latest" --repo "$GITHUB_REPOSITORY"
+              gh release edit "$tag" --draft=false --latest --repo "$GITHUB_REPOSITORY"
             fi
             exit 0
           fi
           gh release create "$tag" release/* --repo "$GITHUB_REPOSITORY" \
-            --title "StreamForge $tag" --generate-notes "${options[@]}" "$latest"
+            --title "StreamForge $tag" --generate-notes --verify-tag --latest
