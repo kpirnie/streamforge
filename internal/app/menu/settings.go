@@ -6,7 +6,8 @@ package menu
 
 import (
 	"os"
-	"strings"
+
+	"github.com/kpirnie/streamforge/internal/media"
 )
 
 // SessionSettings is the startup page for session-specific configuration.
@@ -56,7 +57,7 @@ func Settings(env, session map[string]string) []Choice {
 func ValidSetting(key, value string) bool {
 	switch key {
 	case "STREAMFORGE_PLAYBACK_PARENT":
-		return strings.HasPrefix(value, "/")
+		return media.ValidPlaybackParent(value)
 	case "STREAMFORGE_CODEC":
 		return value == "keep" || value == "hevc" || value == "av1"
 	case "STREAMFORGE_CONTAINER":

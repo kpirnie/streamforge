@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,17 +25,18 @@ var Working string
 
 // Files resolves an input or output media path and enumerates regular media files.
 func Files(root *os.Root, target string, exclusions []string) ([]string, error) {
+	slashTarget := filepath.ToSlash(target)
 	if filepath.IsAbs(target) {
 		var err error
 		target, err = filepath.Rel(root.Name(), target)
 		if err != nil {
 			return nil, err
 		}
-	} else if target != "input" && target != "output" && !strings.HasPrefix(target, "input/") && !strings.HasPrefix(target, "output/") {
+	} else if !managedMediaPath(slashTarget) {
 		target = filepath.Join("input", target)
 	}
 	target = filepath.Clean(target)
-	if !filepath.IsLocal(target) || (target != "input" && target != "output" && !strings.HasPrefix(target, "input/") && !strings.HasPrefix(target, "output/")) {
+	if !filepath.IsLocal(target) || !managedMediaPath(filepath.ToSlash(target)) {
 		return nil, fmt.Errorf("media paths must be inside %s or %s", filepath.Join(root.Name(), "input"), filepath.Join(root.Name(), "output"))
 	}
 	for _, pattern := range exclusions {
@@ -53,7 +55,7 @@ func Files(root *os.Root, target string, exclusions []string) ([]string, error) 
 	}
 	extensions := []string{".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".vob", ".webm", ".wmv"}
 	var files []string
-	err := fs.WalkDir(root.FS(), target, func(path string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(root.FS(), filepath.ToSlash(target), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -64,11 +66,29 @@ func Files(root *os.Root, target string, exclusions []string) ([]string, error) 
 			return nil
 		}
 		if entry.Type().IsRegular() && slices.Contains(extensions, strings.ToLower(filepath.Ext(path))) {
-			files = append(files, path)
+			files = append(files, filepath.FromSlash(path))
 		}
 		return nil
 	})
 	return files, err
+}
+
+func managedMediaPath(slashPath string) bool {
+	tree, _, _ := strings.Cut(slashPath, "/")
+	return tree == "input" || tree == "output"
+}
+
+// ValidPlaybackParent reports whether the player-visible root is absolute.
+func ValidPlaybackParent(parent string) bool {
+	return !strings.ContainsAny(parent, "\r\n") && (filepath.IsAbs(parent) || path.IsAbs(parent))
+}
+
+// PlaybackPath joins a workspace-relative path using the player root’s syntax.
+func PlaybackPath(parent, relative string) string {
+	if filepath.IsAbs(parent) {
+		return filepath.Join(parent, relative)
+	}
+	return path.Join(parent, filepath.ToSlash(relative))
 }
 
 func excluded(name string, patterns []string) bool {
@@ -90,10 +110,11 @@ func WriteSTRM(ctx context.Context, root *os.Root, mediaPath, source, parent str
 
 // WriteSTRMIn writes a companion in a directory relative to the output tree.
 func WriteSTRMIn(ctx context.Context, root *os.Root, mediaPath, source, parent, directory string, titles *Titles, dryRun bool) (string, error) {
-	if !filepath.IsAbs(parent) || strings.ContainsAny(parent, "\r\n") {
+	if !ValidPlaybackParent(parent) {
 		return "", errors.New("playback parent must be an absolute path")
 	}
-	tree, relative, ok := strings.Cut(mediaPath, "/")
+	mediaPath = filepath.FromSlash(mediaPath)
+	tree, relative, ok := strings.Cut(mediaPath, string(filepath.Separator))
 	if !ok || (tree != "input" && tree != "output") || !filepath.IsLocal(relative) || strings.ContainsAny(relative, "\r\n") {
 		return "", errors.New("invalid media location for companion")
 	}
@@ -114,7 +135,7 @@ func WriteSTRMIn(ctx context.Context, root *os.Root, mediaPath, source, parent, 
 	if dryRun {
 		return destination, nil
 	}
-	data := filepath.Join(parent, mediaPath) + "\n"
+	data := PlaybackPath(parent, mediaPath) + "\n"
 	if source == "" {
 		source = mediaPath
 	}

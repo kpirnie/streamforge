@@ -76,7 +76,7 @@ func (c Conversion) Validate() error {
 
 // Target determines the output location and the explicit FFmpeg muxer.
 func (c Conversion) Target(input string) (string, string) {
-	relative := strings.TrimPrefix(input, "input/")
+	relative := strings.TrimPrefix(filepath.FromSlash(input), "input"+string(filepath.Separator))
 	extension := filepath.Ext(relative)
 	stem := strings.TrimSuffix(relative, extension)
 	container := c.Container

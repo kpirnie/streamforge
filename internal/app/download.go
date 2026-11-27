@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/kpirnie/streamforge/internal/app/menu"
@@ -22,7 +21,7 @@ import (
 )
 
 func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand, parent string, titles *media.Titles, value func(string, string) string, dryRun, yes bool, report func(string, ...any), progress *operationProgress) error {
-	if !filepath.IsAbs(parent) || strings.ContainsAny(parent, "\r\n") {
+	if !media.ValidPlaybackParent(parent) {
 		return errors.New("download requires an absolute STREAMFORGE_PLAYBACK_PARENT")
 	}
 	grouped := make(map[string][]xtream.Episode)
@@ -224,7 +223,7 @@ func reportDownloadPaths(report func(string, ...any), video, companion, parent s
 	report("Video: %s", filepath.Join(media.Working, video))
 	if companion != "" {
 		report("Playback link: %s", filepath.Join(media.Working, companion))
-		report("Player path: %s", filepath.Join(parent, video))
+		report("Player path: %s", media.PlaybackPath(parent, video))
 	}
 }
 

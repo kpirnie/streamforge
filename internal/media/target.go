@@ -69,7 +69,7 @@ func SelectTarget(root *os.Root, output, input string, reserved map[string]bool)
 	ext := filepath.Ext(output)
 	stem := strings.TrimSuffix(filepath.Base(output), ext) + "-"
 	dir := filepath.Dir(output)
-	entries, err := fs.ReadDir(root.FS(), dir)
+	entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(dir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
@@ -122,5 +122,5 @@ func previousCompanion(root *os.Root, destination, source string) bool {
 		return false
 	}
 	target := strings.TrimSuffix(string(data), "\n")
-	return filepath.IsAbs(target) && strings.HasSuffix(target, "/"+source) && !strings.ContainsAny(target, "\r\n")
+	return ValidPlaybackParent(target) && strings.HasSuffix(filepath.ToSlash(target), "/"+filepath.ToSlash(source))
 }

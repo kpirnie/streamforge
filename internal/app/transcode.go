@@ -107,7 +107,7 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 	if target == "" && len(downloads) == 0 {
 		return errors.New("transcode requires a media path")
 	}
-	if parent != "" && (!filepath.IsAbs(parent) || strings.ContainsAny(parent, "\r\n")) {
+	if parent != "" && !media.ValidPlaybackParent(parent) {
 		return errors.New("playback parent must be an absolute path")
 	}
 	if remove && !dryRun && !yes {
@@ -165,7 +165,7 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 	seen := make(map[string]bool)
 	var estimate uint64
 	for _, input := range files {
-		if !strings.HasPrefix(input, "input/") {
+		if !strings.HasPrefix(input, "input"+string(filepath.Separator)) {
 			return fmt.Errorf("transcode sources must be under %s", filepath.Join(media.Working, "input"))
 		}
 		info, err := root.Lstat(input)
@@ -181,7 +181,7 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 		directory := downloads[input].directory
 		if directory == "" && series {
 			stem := strings.TrimSuffix(input, filepath.Ext(input))
-			if match := downloadedEpisodePath.FindStringSubmatch(stem); match != nil && filepath.IsLocal(match[1]) && match[1] != "." {
+			if match := downloadedEpisodePath.FindStringSubmatch(filepath.ToSlash(stem)); match != nil && filepath.IsLocal(match[1]) && match[1] != "." {
 				directory = filepath.Join(match[1], "Season "+match[2])
 			}
 		}
