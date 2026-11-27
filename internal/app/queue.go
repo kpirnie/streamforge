@@ -13,9 +13,9 @@ import (
 	"os"
 	"slices"
 	"sync"
-	"syscall"
 
 	"github.com/kpirnie/streamforge/internal/app/menu"
+	"github.com/kpirnie/streamforge/internal/filelock"
 	"github.com/kpirnie/streamforge/internal/media"
 )
 
@@ -33,13 +33,13 @@ func openDownloadQueue() (*downloadQueueStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	lock, err := root.Open(".")
+	lock, err := filelock.OpenQueue(root)
 	if err != nil {
 		root.Close()
 		return nil, err
 	}
 	queue := &downloadQueueStore{root: root, lock: lock}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := filelock.Exclusive(lock, false); err != nil {
 		queue.close()
 		return nil, fmt.Errorf("lock download queue: %w", err)
 	}

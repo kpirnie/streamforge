@@ -15,7 +15,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
+
+	"github.com/kpirnie/streamforge/internal/filelock"
 )
 
 // Working is the media and operational output directory selected at startup.
@@ -196,7 +197,7 @@ func AtomicWrite(ctx context.Context, root *os.Root, destination string, mode fs
 	}
 	defer root.Remove(temp)
 	defer file.Close()
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+	if err := filelock.Exclusive(file, true); err != nil {
 		return err
 	}
 	err = errors.Join(write(file), ctx.Err())

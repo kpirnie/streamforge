@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"syscall"
 	"time"
+
+	"github.com/kpirnie/streamforge/internal/filelock"
 )
 
 var tempName = regexp.MustCompile(`^\.streamforge-(?:export-)?[A-Z2-7]{26}(?:\.[a-zA-Z0-9]{1,12})?$`)
@@ -52,8 +54,8 @@ func CleanTemporary(root *os.Root) error {
 				return err
 			}
 			defer file.Close()
-			err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-			if errors.Is(err, syscall.EWOULDBLOCK) {
+			err = filelock.Exclusive(file, false)
+			if filelock.Busy(err) {
 				return nil
 			}
 			if err != nil {
