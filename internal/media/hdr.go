@@ -31,8 +31,12 @@ type hdrSideData struct {
 }
 
 func (c Conversion) hdrOptions(ctx context.Context, file *os.File, stream Stream) ([]string, error) {
-	command := mediaCommand(ctx, c.FFprobe, "-v", "error", "-protocol_whitelist", "file,pipe", "-select_streams", "v:0", "-read_intervals", "%+#24", "-show_frames", "-show_entries", "frame=side_data_list:frame_side_data", "-of", "json", "/proc/self/fd/3")
-	command.ExtraFiles = []*os.File{file}
+	probeArgs := []string{"-v", "error", "-protocol_whitelist", mediaProtocols, "-select_streams", "v:0", "-read_intervals", "%+#24", "-show_frames", "-show_entries", "frame=side_data_list:frame_side_data", "-of", "json"}
+	probeArgs = append(probeArgs, mediaFileArgs(0)...)
+	command := mediaCommand(ctx, c.FFprobe, probeArgs...)
+	if err := configureMediaFiles(command, file, nil, nil); err != nil {
+		return nil, err
+	}
 	data, err := command.Output()
 	if err != nil {
 		return nil, mediaCommandError(ctx, err, "could not inspect HDR side data")

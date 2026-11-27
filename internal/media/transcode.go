@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -66,12 +66,23 @@ func (c Conversion) Validate() error {
 		if !filepath.IsAbs(binary) {
 			return errors.New("ffmpeg and ffprobe are required on PATH or at absolute STREAMFORGE_FFMPEG and STREAMFORGE_FFPROBE paths")
 		}
-		info, err := os.Stat(binary)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+		if !IsMediaExecutable(binary) {
 			return errors.New("host FFmpeg and FFprobe executables are required")
 		}
 	}
 	return nil
+}
+
+// IsMediaExecutable checks whether the configured tool is a regular executable.
+func IsMediaExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Ext(path), ".exe")
+	}
+	return info.Mode().Perm()&0111 != 0
 }
 
 // Target determines the output location and the explicit FFmpeg muxer.
@@ -136,7 +147,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 	if c.Series && !c.Force && info.Size() < 500*1024*1024 {
 		return "", true, 0, nil
 	}
-	source, err := root.OpenFile(input, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	source, err := openMediaFile(root, input, false)
 	if err != nil {
 		return "", false, 0, err
 	}
@@ -227,7 +238,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 		if c.Series && subtitle == nil {
 			return "", true, 0, nil
 		}
-		output, err := root.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		output, err := openMediaFile(root, target, true)
 		if err != nil {
 			return "", false, 0, err
 		}
@@ -312,11 +323,8 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 				if err := markSource(output, input); err != nil {
 					return err
 				}
-				if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-					ownershipErr := output.Chown(int(stat.Uid), int(stat.Gid))
-					if ownershipErr != nil && !errors.Is(ownershipErr, syscall.EPERM) {
-						return ownershipErr
-					}
+				if err := preserveOwnership(output, info); err != nil {
+					return err
 				}
 				err = output.Chmod(info.Mode().Perm())
 			}
@@ -338,7 +346,7 @@ func (c Conversion) Convert(ctx context.Context, root *os.Root, input, target, m
 func openSidecar(root *os.Root, input string) (*os.File, error) {
 	path := strings.TrimSuffix(input, filepath.Ext(input)) + ".srt"
 	// Reject symlinks and prevent a named pipe from blocking the open.
-	file, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	file, err := openMediaFile(root, path, true)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -411,9 +419,11 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 	if strings.HasSuffix(encoder, "_vaapi") {
 		args = append(args, "-vaapi_device", c.vaapiDevice())
 	}
-	args = append(args, "-protocol_whitelist", "file,pipe", "-threads", threads, "-i", "/proc/self/fd/3")
+	args = append(args, "-protocol_whitelist", mediaProtocols, "-threads", threads)
+	args = append(args, mediaFileArgs(0, "-i")...)
 	if subtitle != nil {
-		args = append(args, "-protocol_whitelist", "file,pipe", "-f", "srt", "-i", "/proc/self/fd/5")
+		args = append(args, "-protocol_whitelist", mediaProtocols, "-f", "srt")
+		args = append(args, mediaFileArgs(2, "-i")...)
 	}
 	args = append(args, "-map", "0", "-map_metadata", "0", "-map_chapters", "0", "-c", "copy", "-c:v", encoder, "-threads:v", threads)
 	if subtitle != nil {
@@ -481,11 +491,11 @@ func (c Conversion) encode(ctx context.Context, input, output, subtitle *os.File
 	if !c.Series {
 		args = append(args, "-max_muxing_queue_size", "9999")
 	}
-	args = append(args, "-f", muxer, "/proc/self/fd/4")
+	args = append(args, "-f", muxer)
+	args = append(args, mediaFileArgs(1)...)
 	command := mediaCommand(ctx, c.FFmpeg, args...)
-	command.ExtraFiles = []*os.File{input, output}
-	if subtitle != nil {
-		command.ExtraFiles = append(command.ExtraFiles, subtitle)
+	if err := configureMediaFiles(command, input, output, subtitle); err != nil {
+		return err
 	}
 	if err := command.Run(); err != nil {
 		return mediaCommandError(ctx, err, "FFmpeg could not encode the selected streams in the output container")

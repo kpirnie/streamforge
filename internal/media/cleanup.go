@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
-	"syscall"
 	"time"
 
 	"github.com/kpirnie/streamforge/internal/filelock"
@@ -41,12 +40,11 @@ func CleanTemporary(root *os.Root) error {
 				}
 				return err
 			}
-			stat, ok := info.Sys().(*syscall.Stat_t)
 			// A short grace period protects a file between exclusive creation and locking.
-			if !ok || stat.Uid != uint32(os.Geteuid()) || time.Since(info.ModTime()) < time.Minute {
+			if !temporaryCandidate(info) || time.Since(info.ModTime()) < time.Minute {
 				return nil
 			}
-			file, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+			file, err := openMediaFile(root, path, false)
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
 			}
@@ -54,6 +52,9 @@ func CleanTemporary(root *os.Root) error {
 				return err
 			}
 			defer file.Close()
+			if !ownsTemporary(file, info) {
+				return nil
+			}
 			err = filelock.Exclusive(file, false)
 			if filelock.Busy(err) {
 				return nil

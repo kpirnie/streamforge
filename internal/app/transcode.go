@@ -212,10 +212,11 @@ func runTranscode(ctx context.Context, args []string, series bool, downloads map
 			return err
 		}
 	}
-	ctx, err = media.WithCPUCap(ctx, parallel)
+	ctx, releaseCPUCap, err := media.WithCPUCap(ctx, parallel)
 	if err != nil {
 		return err
 	}
+	defer releaseCPUCap()
 	encoders, err := profile.EncoderInventory(ctx)
 	if err != nil {
 		return err

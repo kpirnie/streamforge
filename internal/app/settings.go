@@ -45,6 +45,10 @@ func unknownSettings(env map[string]string) []string {
 	}
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case "STREAMFORGE_WORK_DIR", "STREAMFORGE_RELEASE", "STREAMFORGE_BIN_DIR":
+			continue
+		}
 		accept(key)
 	}
 	var warnings []string

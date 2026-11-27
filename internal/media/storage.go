@@ -8,7 +8,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"syscall"
 )
 
 // DestinationSpace checks a managed destination's permissions and available bytes.
@@ -23,12 +22,5 @@ func DestinationSpace(root *os.Root, tree string, required bool) (uint64, error)
 	} else if err != nil || !info.IsDir() {
 		return 0, errors.New("media destination must be a real directory")
 	}
-	if err := syscall.Access(dir, 3); err != nil {
-		return 0, errors.New("media destination is not writable")
-	}
-	var stats syscall.Statfs_t
-	if err := syscall.Statfs(dir, &stats); err != nil {
-		return 0, errors.New("could not check media destination space")
-	}
-	return stats.Bavail * uint64(stats.Bsize), nil
+	return destinationSpace(dir)
 }

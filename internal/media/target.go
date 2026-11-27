@@ -23,12 +23,8 @@ func fingerprint(path string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(path)))
 }
 
-func descriptor(file *os.File) string {
-	return fmt.Sprintf("/proc/self/fd/%d", file.Fd())
-}
-
 func ownership(root *os.Root, destination, input string) (bool, bool, error) {
-	file, err := root.OpenFile(destination, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	file, err := openMediaFile(root, destination, true)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, false, nil
 	}
@@ -47,10 +43,7 @@ func ownership(root *os.Root, destination, input string) (bool, bool, error) {
 		return true, false, nil
 	}
 	var value [64]byte
-	size, err := syscall.Getxattr(descriptor(file), sourceAttribute, value[:])
-	if errors.Is(err, syscall.ENODATA) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.ERANGE) {
-		return true, false, nil
-	}
+	size, err := readSource(file, value[:])
 	if err != nil {
 		return false, false, err
 	}
@@ -99,16 +92,8 @@ func SelectTarget(root *os.Root, output, input string, reserved map[string]bool)
 	}
 }
 
-func markSource(file *os.File, source string) error {
-	err := syscall.Setxattr(descriptor(file), sourceAttribute, []byte(fingerprint(source)), 0)
-	if errors.Is(err, syscall.ENOTSUP) {
-		return nil
-	}
-	return err
-}
-
 func previousCompanion(root *os.Root, destination, source string) bool {
-	file, err := root.OpenFile(destination, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	file, err := openMediaFile(root, destination, true)
 	if err != nil {
 		return false
 	}

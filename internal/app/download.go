@@ -121,8 +121,7 @@ func runDownload(ctx context.Context, p *xtream.Providers, command seriesCommand
 	if !filepath.IsAbs(ffprobe) {
 		return errors.New("ffprobe is required on PATH or at an absolute STREAMFORGE_FFPROBE path")
 	}
-	probe, err := os.Stat(ffprobe)
-	if err != nil || !probe.Mode().IsRegular() || probe.Mode().Perm()&0111 == 0 {
+	if !media.IsMediaExecutable(ffprobe) {
 		return errors.New("host FFprobe executable is required")
 	}
 	if command.redownload && !yes {

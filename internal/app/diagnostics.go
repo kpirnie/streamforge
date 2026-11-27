@@ -47,6 +47,13 @@ type statusReport struct {
 	Session      []string          `json:"session_log"`
 }
 
+func diagnosticDevicePaths() []string {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	return []string{"/dev/nvidiactl", "/dev/dri/renderD128"}
+}
+
 func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]string) statusReport {
 	report := statusReport{Version: "development", Commit: "unknown", Built: "unknown", Platform: runtime.GOOS + "/" + runtime.GOARCH, Runtime: runtime.GOOS,
 		Dependencies: make(map[string]string), Devices: make(map[string]bool), Mounts: make(map[string]string), Services: make(map[string]string),
@@ -76,7 +83,7 @@ func diagnosticStatus(ctx context.Context, logFile *os.File, session map[string]
 		report.Findings = append(report.Findings, "Configuration could not be read or contains invalid entries")
 	}
 	value := func(key, fallback string) string { return sessionValue(key, fallback, env, session) }
-	for _, device := range []string{"/dev/nvidiactl", "/dev/dri/renderD128"} {
+	for _, device := range diagnosticDevicePaths() {
 		file, err := os.OpenFile(device, os.O_RDWR, 0)
 		report.Devices[device] = err == nil
 		if err == nil {
@@ -265,7 +272,7 @@ func runDiagnostics(ctx context.Context, args []string, out io.Writer, logFile *
 		for _, name := range []string{"Dispatcharr", "Emby"} {
 			fmt.Fprintf(&text, "%s: %s\n", name, report.Services[name])
 		}
-		for _, name := range []string{"/dev/nvidiactl", "/dev/dri/renderD128"} {
+		for _, name := range diagnosticDevicePaths() {
 			fmt.Fprintf(&text, "%s accessible: %t\n", name, report.Devices[name])
 		}
 		for _, name := range applicationDirectories() {

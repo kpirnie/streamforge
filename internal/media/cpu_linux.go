@@ -7,7 +7,6 @@ package media
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,20 +15,11 @@ import (
 	"unsafe"
 )
 
-const (
-	cpuLaunchMode    = "--streamforge-media-cpu-launch"
-	cpuLaunchFailure = 125
-)
-
-type cpuMaskKey struct{}
-
-var errCPUEnforcement = errors.New("could not establish CPU enforcement or launch the media executable")
-
 // WithCPUCap selects a shared set of allowed logical CPUs for the batch's media commands.
-func WithCPUCap(ctx context.Context, limit int) (context.Context, error) {
+func WithCPUCap(ctx context.Context, limit int) (context.Context, func(), error) {
 	mask, err := currentCPUMask()
 	if err != nil {
-		return nil, fmt.Errorf("read allowed CPUs: %w", err)
+		return nil, nil, fmt.Errorf("read allowed CPUs: %w", err)
 	}
 	for index, allowed := range mask {
 		for bit := byte(1); bit != 0; bit <<= 1 {
@@ -43,7 +33,7 @@ func WithCPUCap(ctx context.Context, limit int) (context.Context, error) {
 			}
 		}
 	}
-	return context.WithValue(ctx, cpuMaskKey{}, hex.EncodeToString(mask)), nil
+	return context.WithValue(ctx, cpuLimitKey{}, hex.EncodeToString(mask)), func() {}, nil
 }
 
 func currentCPUMask() ([]byte, error) {
@@ -60,7 +50,7 @@ func currentCPUMask() ([]byte, error) {
 }
 
 func mediaCommand(ctx context.Context, binary string, args ...string) *exec.Cmd {
-	mask, limited := ctx.Value(cpuMaskKey{}).(string)
+	mask, limited := ctx.Value(cpuLimitKey{}).(string)
 	if !limited {
 		return exec.CommandContext(ctx, binary, args...)
 	}
@@ -74,17 +64,6 @@ func mediaCommand(ctx context.Context, binary string, args ...string) *exec.Cmd 
 		return err
 	}
 	return command
-}
-
-func mediaCommandError(ctx context.Context, err error, message string) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	var exit *exec.ExitError
-	if ctx.Value(cpuMaskKey{}) != nil && (!errors.As(err, &exit) || exit.ExitCode() == cpuLaunchFailure) {
-		return fmt.Errorf("%w: %w", errCPUEnforcement, err)
-	}
-	return errors.New(message)
 }
 
 // RunCPULaunch handles the private entry point that applies CPU affinity before exec.

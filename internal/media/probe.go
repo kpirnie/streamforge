@@ -31,8 +31,12 @@ type Stream struct {
 
 // Probe validates a media file with the host-mounted FFprobe executable.
 func Probe(ctx context.Context, binary string, file *os.File) ([]Stream, error) {
-	command := mediaCommand(ctx, binary, "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_name,codec_type,color_transfer,pix_fmt,color_primaries,color_space,color_range:stream_side_data:stream_disposition=attached_pic:stream_tags=language", "-of", "json", "/proc/self/fd/3")
-	command.ExtraFiles = []*os.File{file}
+	args := []string{"-v", "error", "-protocol_whitelist", mediaProtocols, "-show_entries", "stream=codec_name,codec_type,color_transfer,pix_fmt,color_primaries,color_space,color_range:stream_side_data:stream_disposition=attached_pic:stream_tags=language", "-of", "json"}
+	args = append(args, mediaFileArgs(0)...)
+	command := mediaCommand(ctx, binary, args...)
+	if err := configureMediaFiles(command, file, nil, nil); err != nil {
+		return nil, err
+	}
 	output, err := command.Output()
 	if err != nil {
 		return nil, mediaCommandError(ctx, err, "FFprobe could not read media")
