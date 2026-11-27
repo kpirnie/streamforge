@@ -73,7 +73,7 @@ func RunCPULaunch(args []string) {
 	}
 	runtime.LockOSThread()
 	err := launchWithCPUCap(args[1:])
-	fmt.Fprintln(os.Stderr, err)
+	fmt.Fprintf(os.Stderr, "%s%v\n", cpuLaunchErrorPrefix, err)
 	os.Exit(cpuLaunchFailure)
 }
 

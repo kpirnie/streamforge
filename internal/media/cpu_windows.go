@@ -155,7 +155,7 @@ func RunCPULaunch(args []string) {
 	}
 	code, err := launchWindowsMedia(args[1:])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "%s%v\n", cpuLaunchErrorPrefix, err)
 	}
 	os.Exit(code)
 }

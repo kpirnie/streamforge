@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 const (
-	cpuLaunchMode    = "--streamforge-media-cpu-launch"
-	cpuLaunchFailure = 125
+	cpuLaunchMode        = "--streamforge-media-cpu-launch"
+	cpuLaunchFailure     = 125
+	cpuLaunchErrorPrefix = "StreamForge media launcher: "
 )
 
 type cpuLimitKey struct{}
@@ -26,6 +28,12 @@ func mediaCommandError(ctx context.Context, err error, message string) error {
 	}
 	var exit *exec.ExitError
 	if ctx.Value(cpuLimitKey{}) != nil && (!errors.As(err, &exit) || exit.ExitCode() == cpuLaunchFailure) {
+		if exit != nil {
+			line, _, _ := strings.Cut(string(exit.Stderr), "\n")
+			if detail, ok := strings.CutPrefix(line, cpuLaunchErrorPrefix); ok {
+				return fmt.Errorf("%w: %s", errCPUEnforcement, strings.TrimSpace(detail))
+			}
+		}
 		return fmt.Errorf("%w: %w", errCPUEnforcement, err)
 	}
 	return errors.New(message)
